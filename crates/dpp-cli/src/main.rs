@@ -136,13 +136,14 @@ fn check_world(paths: &WorldPaths) -> Result<()> {
 
         if let (Some(lock_format), Some(manifest_format)) =
             (lock.target_pack_format(), manifest.world.pack_format)
-            && lock_format != manifest_format
         {
-            return Err(DppError::PackFormatMismatch {
-                lock: lock_format,
-                manifest: manifest_format,
+            if lock_format != manifest_format {
+                return Err(DppError::PackFormatMismatch {
+                    lock: lock_format,
+                    manifest: manifest_format,
+                }
+                .into());
             }
-            .into());
         }
     }
 
