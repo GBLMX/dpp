@@ -346,3 +346,782 @@ fn inspect_accepts_and_rejects_pack_zip() {
             "does not support data pack format 88.0",
         ));
 }
+
+#[test]
+fn inspect_prints_pack_manifest() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("pack.zip");
+    let file = fs::File::create(&archive).unwrap();
+    let mut writer = ZipWriter::new(file);
+    for (name, contents) in [
+        (
+            "pack.mcmeta",
+            r#"{"pack":{"description":"test","min_format":[121,0],"max_format":[121,0]}}"#,
+        ),
+        (
+            "dpp.toml",
+            r#"
+[package]
+id = "smithed:stdlib"
+version = "0.3.1"
+
+[dependencies]
+"smithed:events" = ">=0.2.0, <0.4.0"
+"#,
+        ),
+    ] {
+        writer
+            .start_file(
+                name,
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .unwrap();
+        writer.write_all(contents.as_bytes()).unwrap();
+    }
+    writer.finish().unwrap();
+
+    dpp()
+        .args([
+            "inspect",
+            archive.to_str().unwrap(),
+            "--pack-format",
+            "121.0",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pack: smithed:stdlib 0.3.1"))
+        .stdout(predicate::str::contains("dependencies: smithed:events"));
+}
+
+#[test]
+fn host_requires_server_root() {
+    dpp()
+        .args(["host", "status"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--server-root"));
+}
+
+#[test]
+fn host_check_detects_and_writes_lock() {
+    let directory = tempfile::tempdir().unwrap();
+    fs::write(directory.path().join("paper-26.3.jar"), b"jar").unwrap();
+    fs::create_dir(directory.path().join("plugins")).unwrap();
+    fs::write(
+        directory.path().join("plugins/dpp-adapter-paper.jar"),
+        b"jar",
+    )
+    .unwrap();
+    fs::create_dir_all(directory.path().join(".dpp")).unwrap();
+    fs::write(
+        directory.path().join(".dpp/host-provided.toml"),
+        r#"
+[[pack]]
+id = "DppAdapterPaper/bootstrap"
+plugin = "DppAdapterPaper"
+version = "0.1.0"
+enabled = true
+"#,
+    )
+    .unwrap();
+
+    dpp()
+        .args([
+            "--server-root",
+            directory.path().to_str().unwrap(),
+            "host",
+            "check",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("kind: paper"))
+        .stdout(predicate::str::contains("dpp-adapter-paper.jar"))
+        .stdout(predicate::str::contains("DppAdapterPaper/bootstrap"));
+
+    let lock = fs::read_to_string(directory.path().join(".dpp/host.lock")).unwrap();
+    assert!(lock.contains("kind = \"paper\""));
+    assert!(lock.contains("dpp-adapter-paper.jar"));
+    assert!(lock.contains("DppAdapterPaper/bootstrap"));
+    assert!(lock.contains("[[provided_pack]]"));
+
+    dpp()
+        .args([
+            "--server-root",
+            directory.path().to_str().unwrap(),
+            "host",
+            "status",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Observed host:"))
+        .stdout(predicate::str::contains("host.lock:"));
+}
+
+#[test]
+fn snapshot_save_list_restore() {
+    let directory = world();
+    let world = directory.path().to_str().unwrap();
+    dpp().args(["--world", world, "init"]).assert().success();
+
+    dpp()
+        .args(["--world", world, "snapshot", "save", "first"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("saved snapshot first"));
+
+    dpp()
+        .args(["--world", world, "snapshot", "list"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("first"));
+
+    dpp()
+        .args(["--world", world, "snapshot", "restore", "first"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("restored snapshot first"));
+}
+
+#[test]
+fn config_allow_apply_and_status() {
+    let directory = tempfile::tempdir().unwrap();
+    let root = directory.path();
+    fs::create_dir_all(root.join("config")).unwrap();
+    fs::write(root.join("config/app.toml"), "a = 1\n").unwrap();
+    let patch = root.join("patch.toml");
+    fs::write(
+        &patch,
+        r#"
+target = "config/app.toml"
+format = "toml"
+merge = "merge"
+
+[data]
+b = 2
+"#,
+    )
+    .unwrap();
+    let root_arg = root.to_str().unwrap();
+
+    dpp()
+        .args([
+            "--server-root",
+            root_arg,
+            "config",
+            "allow",
+            "config/app.toml",
+        ])
+        .assert()
+        .success();
+    dpp()
+        .args([
+            "--server-root",
+            root_arg,
+            "config",
+            "apply",
+            patch.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("applied config patch"));
+    dpp()
+        .args(["--server-root", root_arg, "config", "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("config/app.toml"));
+    let value = fs::read_to_string(root.join("config/app.toml")).unwrap();
+    assert!(value.contains("a = 1"));
+    assert!(value.contains("b = 2"));
+}
+
+#[test]
+fn adapter_manifest_and_event_validation() {
+    let directory = tempfile::tempdir().unwrap();
+    let manifest = directory.path().join("dpp-adapter.toml");
+    fs::write(
+        &manifest,
+        r#"
+[adapter]
+id = "dpp-adapter-paper"
+version = "0.1.0"
+protocol = "dpp.events/1"
+capabilities = ["dpp.events/1"]
+events = ["dpp:boss_phase"]
+"#,
+    )
+    .unwrap();
+    let event = directory.path().join("event.json");
+    fs::write(
+        &event,
+        r#"{"protocol":"dpp.events/1","id":1,"event":"dpp:boss_phase","payload":{"phase":2}}"#,
+    )
+    .unwrap();
+
+    dpp()
+        .args(["adapter", "validate", manifest.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("dpp-adapter-paper"));
+    dpp()
+        .args([
+            "adapter",
+            "event",
+            manifest.to_str().unwrap(),
+            event.to_str().unwrap(),
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok: event dpp:boss_phase"));
+
+    fs::write(
+        &event,
+        r#"{"protocol":"dpp.events/1","id":2,"event":"dpp:not_declared"}"#,
+    )
+    .unwrap();
+    dpp()
+        .args([
+            "adapter",
+            "event",
+            manifest.to_str().unwrap(),
+            event.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("not declared"));
+}
+
+#[test]
+fn status_reports_host_provided_collision() {
+    let world = world();
+    let world_arg = world.path().to_str().unwrap();
+    dpp()
+        .args(["--world", world_arg, "init"])
+        .assert()
+        .success();
+    fs::write(
+        world.path().join(".dpp/index.toml"),
+        r#"
+index_version = 1
+[[package]]
+id = "demo"
+source = "modrinth"
+sha512 = "abc"
+install_name = "DppAdapterPaper/bootstrap"
+[[package.file]]
+path = "pack.mcmeta"
+sha512 = "def"
+"#,
+    )
+    .unwrap();
+
+    let server = tempfile::tempdir().unwrap();
+    fs::create_dir_all(server.path().join(".dpp")).unwrap();
+    fs::write(
+        server.path().join(".dpp/host-provided.toml"),
+        r#"
+[[pack]]
+id = "DppAdapterPaper/bootstrap"
+plugin = "DppAdapterPaper"
+"#,
+    )
+    .unwrap();
+
+    dpp()
+        .args([
+            "--world",
+            world_arg,
+            "--server-root",
+            server.path().to_str().unwrap(),
+            "status",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "collides with a dpp-managed package",
+        ));
+}
+
+#[test]
+fn new_creates_beet_compatible_scaffold() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("demo");
+    dpp()
+        .args(["new", "demo", "--dir", project.to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("created datapack project"));
+
+    assert!(project.join("dpp.toml").is_file());
+    assert!(project.join("beet.json").is_file());
+    assert!(project.join("src/pack.mcmeta").is_file());
+    assert!(
+        project
+            .join("src/data/demo/function/load.mcfunction")
+            .is_file()
+    );
+    let manifest = fs::read_to_string(project.join("dpp.toml")).unwrap();
+    assert!(manifest.contains("id = \"local:demo\""));
+    assert!(manifest.contains("pack_format = [121, 0]"));
+
+    let archive = directory.path().join("demo.zip");
+    write_tree_zip(&project.join("src"), &archive);
+    dpp()
+        .args([
+            "inspect",
+            archive.to_str().unwrap(),
+            "--pack-format",
+            "121.0",
+        ])
+        .assert()
+        .success();
+
+    dpp()
+        .args(["new", "demo", "--dir", project.to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("already exists"));
+}
+
+fn write_tree_zip(root: &Path, zip_path: &Path) {
+    fn add_tree(writer: &mut ZipWriter<std::fs::File>, root: &Path, current: &Path) {
+        for entry in fs::read_dir(current).unwrap() {
+            let entry = entry.unwrap();
+            let path = entry.path();
+            if entry.file_type().unwrap().is_dir() {
+                add_tree(writer, root, &path);
+            } else {
+                let name = path
+                    .strip_prefix(root)
+                    .unwrap()
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                writer
+                    .start_file(
+                        name,
+                        SimpleFileOptions::default()
+                            .compression_method(CompressionMethod::Deflated),
+                    )
+                    .unwrap();
+                writer.write_all(&fs::read(&path).unwrap()).unwrap();
+            }
+        }
+    }
+
+    let file = fs::File::create(zip_path).unwrap();
+    let mut writer = ZipWriter::new(file);
+    add_tree(&mut writer, root, root);
+    writer.finish().unwrap();
+}
+
+#[test]
+fn stdlib_inspects_as_valid_pack() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../stdlib");
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("stdlib.zip");
+    write_tree_zip(&root, &archive);
+
+    dpp()
+        .args([
+            "inspect",
+            archive.to_str().unwrap(),
+            "--pack-format",
+            "121.0",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pack: dpp:stdlib 0.1.0"));
+}
+
+#[test]
+fn demo_inspects_as_valid_pack() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/demo");
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("demo.zip");
+    write_tree_zip(&root, &archive);
+
+    dpp()
+        .args([
+            "inspect",
+            archive.to_str().unwrap(),
+            "--pack-format",
+            "121.0",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pack: local:demo 0.1.0"))
+        .stdout(predicate::str::contains("dependencies: dpp:stdlib"));
+}
+
+#[test]
+fn new_rejects_minecraft_namespace() {
+    let directory = tempfile::tempdir().unwrap();
+    dpp()
+        .args([
+            "new",
+            "minecraft",
+            "--dir",
+            directory.path().join("pack").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reserved"));
+    assert!(!directory.path().join("pack").exists());
+}
+
+#[test]
+fn build_pack_builds_scaffold_project() {
+    let directory = tempfile::tempdir().unwrap();
+    let project = directory.path().join("demo");
+    let archive = directory.path().join("demo.zip");
+    dpp()
+        .args(["new", "demo", "--dir", project.to_str().unwrap()])
+        .assert()
+        .success();
+
+    dpp()
+        .args([
+            "build-pack",
+            project.to_str().unwrap(),
+            "--output",
+            archive.to_str().unwrap(),
+            "--url",
+            "https://example.invalid/demo.zip",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"id\": \"local:demo\""))
+        .stdout(predicate::str::contains(
+            "\"url\": \"https://example.invalid/demo.zip\"",
+        ));
+
+    dpp()
+        .args([
+            "inspect",
+            archive.to_str().unwrap(),
+            "--pack-format",
+            "121.0",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("pack: local:demo 0.1.0"));
+}
+
+#[test]
+fn update_writes_lock_for_empty_world() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "update"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+    assert!(world.path().join(".dpp/lock.toml").is_file());
+}
+
+#[test]
+fn apply_records_next_start_and_supports_dry_run() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "update"])
+        .assert()
+        .success();
+
+    let applied = world.path().join(".dpp/applied.toml");
+    dpp()
+        .args([
+            "--world",
+            world.path().to_str().unwrap(),
+            "apply",
+            "--dry-run",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("would apply"));
+    assert!(!applied.exists());
+
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "apply"])
+        .assert()
+        .success();
+    let text = fs::read_to_string(&applied).unwrap();
+    assert!(text.contains("method = \"next_start\""));
+    assert!(text.contains("verification = \"unverified\""));
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Applied:"))
+        .stdout(predicate::str::contains("via next_start"));
+
+    fs::remove_file(&applied).unwrap();
+    dpp()
+        .args([
+            "--world",
+            world.path().to_str().unwrap(),
+            "apply",
+            "--manual",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("restart or rejoin"));
+    assert!(
+        fs::read_to_string(&applied)
+            .unwrap()
+            .contains("method = \"manual\"")
+    );
+}
+
+#[test]
+fn apply_rcon_sends_reload() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let (id, kind, body) = read_rcon_packet(&mut stream);
+        assert_eq!((id, kind, body.as_slice()), (1, 3, b"secret".as_slice()));
+        write_rcon_packet(&mut stream, 1, 2, b"");
+        let (id, kind, body) = read_rcon_packet(&mut stream);
+        assert_eq!((id, kind, body.as_slice()), (2, 2, b"reload".as_slice()));
+        write_rcon_packet(&mut stream, 2, 0, b"reloaded");
+        let (id, kind, body) = read_rcon_packet(&mut stream);
+        assert_eq!(
+            (id, kind, body.as_slice()),
+            (2, 2, b"datapack list enabled".as_slice())
+        );
+        write_rcon_packet(&mut stream, 2, 0, b"There are 0 data packs enabled");
+    });
+
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "update"])
+        .assert()
+        .success();
+
+    let server_root = tempfile::tempdir().unwrap();
+    fs::write(
+        server_root.path().join("server.properties"),
+        format!("enable-rcon=true\nrcon.port={port}\n"),
+    )
+    .unwrap();
+    dpp()
+        .args([
+            "--world",
+            world.path().to_str().unwrap(),
+            "--server-root",
+            server_root.path().to_str().unwrap(),
+            "apply",
+            "--rcon",
+        ])
+        .env("DPP_RCON_PASSWORD", "secret")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("reload sent through RCON"));
+
+    server.join().unwrap();
+    let applied = fs::read_to_string(world.path().join(".dpp/applied.toml")).unwrap();
+    assert!(applied.contains("method = \"rcon\""));
+    assert!(applied.contains("verification = \"pack_list_ok\""));
+}
+
+fn read_rcon_packet(stream: &mut std::net::TcpStream) -> (i32, i32, Vec<u8>) {
+    let mut length = [0u8; 4];
+    stream.read_exact(&mut length).unwrap();
+    let mut packet = vec![0u8; i32::from_le_bytes(length) as usize];
+    stream.read_exact(&mut packet).unwrap();
+    let id = i32::from_le_bytes(packet[0..4].try_into().unwrap());
+    let kind = i32::from_le_bytes(packet[4..8].try_into().unwrap());
+    (id, kind, packet[8..packet.len() - 2].to_vec())
+}
+
+fn write_rcon_packet(stream: &mut std::net::TcpStream, id: i32, kind: i32, body: &[u8]) {
+    let length = (body.len() + 10) as i32;
+    stream.write_all(&length.to_le_bytes()).unwrap();
+    stream.write_all(&id.to_le_bytes()).unwrap();
+    stream.write_all(&kind.to_le_bytes()).unwrap();
+    stream.write_all(body).unwrap();
+    stream.write_all(&[0, 0]).unwrap();
+}
+
+#[test]
+fn install_stage_writes_plan_and_apply_aborts() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+
+    dpp()
+        .args([
+            "--world",
+            world.path().to_str().unwrap(),
+            "install",
+            "--stage",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("staged plan:"));
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Staged: txn-"));
+    assert!(!world.path().join(".dpp/lock.toml").exists());
+
+    dpp()
+        .args([
+            "--world",
+            world.path().to_str().unwrap(),
+            "apply",
+            "--abort",
+        ])
+        .assert()
+        .success();
+    let mut plans = Vec::new();
+    for entry in fs::read_dir(world.path().join(".dpp/staging")).unwrap() {
+        let path = entry.unwrap().path().join("plan.toml");
+        if path.is_file() {
+            plans.push(path);
+        }
+    }
+    assert!(plans.is_empty());
+}
+
+#[test]
+fn status_reports_pending_journal_without_recovering_it() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+    fs::write(
+        world.path().join(".dpp/journal.toml"),
+        r#"journal_version = 1
+transaction = "tx"
+phase = "committing"
+staging = ".dpp/staging/tx"
+backup_names = []
+existing_names = []
+installed_names = []
+removed_names = []
+"#,
+    )
+    .unwrap();
+
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "status"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "Journal: committing transaction tx",
+        ));
+    assert!(world.path().join(".dpp/journal.toml").is_file());
+}
+
+fn write_order_lock(world: &Path) {
+    fs::create_dir_all(world.join(".dpp")).unwrap();
+    fs::write(
+        world.join(".dpp/lock.toml"),
+        r#"lock_version = 1
+
+[[package]]
+id = "a"
+source = "modrinth"
+version_number = "1.0.0"
+sha512 = "a"
+install_name = "0010_a"
+load_weight = 10
+
+[[package]]
+id = "b"
+source = "modrinth"
+version_number = "1.0.0"
+sha512 = "b"
+install_name = "0020_b"
+load_weight = 20
+"#,
+    )
+    .unwrap();
+}
+
+#[test]
+fn order_reports_drift_and_commands() {
+    let directory = tempfile::tempdir().unwrap();
+    let enabled = ["vanilla", "file/0020_b", "file/0010_a"];
+    write_level_dat_packs(directory.path(), "26.3", false, Some((&enabled, &[])));
+    write_order_lock(directory.path());
+
+    dpp()
+        .args([
+            "--world",
+            directory.path().to_str().unwrap(),
+            "order",
+            "--print-commands",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Expected: 0010_a, 0020_b"))
+        .stdout(predicate::str::contains("Observed: 0020_b, 0010_a"))
+        .stdout(predicate::str::contains("Order: drift"))
+        .stdout(predicate::str::contains(
+            "/datapack enable \"file/0010_a\" before \"file/0020_b\"",
+        ));
+
+    dpp()
+        .args([
+            "--world",
+            directory.path().to_str().unwrap(),
+            "order",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"status\": \"drift\""));
+}
+
+#[test]
+fn order_reports_unknown_when_world_may_be_running() {
+    let directory = tempfile::tempdir().unwrap();
+    write_level_dat_packs(
+        directory.path(),
+        "26.3",
+        false,
+        Some((&["file/0010_a"], &[])),
+    );
+    write_order_lock(directory.path());
+    fs::write(directory.path().join("session.lock"), b"").unwrap();
+
+    dpp()
+        .args(["--world", directory.path().to_str().unwrap(), "order"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Observed: unknown"))
+        .stdout(predicate::str::contains("Order: unknown"));
+}
+
+#[test]
+fn order_without_lock_reports_empty_expected() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "order"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Expected: none"));
+}

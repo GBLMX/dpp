@@ -6,6 +6,8 @@ dpp 是 Minecraft Java Edition 的**原版数据包管理器**：为一个世界
 
 它不管理 mod，不管理资源包，不注入游戏，不执行包内脚本。
 
+> 架构决策记录见 [adr/README.md](adr/README.md)。ADR 与本文冲突时，ADR 是决策来源；实现或本文需要同步更新。
+
 核心目标：
 
 - 同一份 `dpp.toml` + `lock.toml` 能在另一台机器上还原同一组数据包。

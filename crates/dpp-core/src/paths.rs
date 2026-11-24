@@ -144,6 +144,60 @@ pub(crate) fn write_new_atomic(path: &Path, contents: &[u8]) -> DppResult<()> {
     Ok(())
 }
 
+/// Write a file atomically, replacing an existing file.
+pub(crate) fn write_replace_atomic(path: &Path, contents: &[u8]) -> DppResult<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+
+    let mut temporary = NamedTempFile::new_in(parent).map_err(|source| DppError::Write {
+        path: path.to_path_buf(),
+        source,
+    })?;
+    temporary
+        .write_all(contents)
+        .map_err(|source| DppError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    temporary
+        .as_file()
+        .sync_all()
+        .map_err(|source| DppError::Write {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    temporary.persist(path).map_err(|error| DppError::Write {
+        path: path.to_path_buf(),
+        source: error.error,
+    })?;
+
+    Ok(())
+}
+
+/// Global content-addressed cache directory.
+pub fn cache_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("XDG_CACHE_HOME") {
+        return PathBuf::from(path).join("dpp");
+    }
+
+    #[cfg(target_os = "windows")]
+    if let Some(path) = std::env::var_os("LOCALAPPDATA") {
+        return PathBuf::from(path).join("dpp").join("cache");
+    }
+
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".cache").join("dpp");
+    }
+
+    std::env::temp_dir().join("dpp-cache")
+}
+
+pub fn archive_cache_path(sha512: &str) -> PathBuf {
+    cache_dir().join("archives").join(format!("{sha512}.zip"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

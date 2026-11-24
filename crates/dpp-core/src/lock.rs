@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{DppError, DppResult};
 use crate::manifest::DEFAULT_LOAD_WEIGHT;
 use crate::pack_format::PackFormat;
+use crate::paths::write_replace_atomic;
 
 pub const LOCK_FILE_VERSION: u32 = 1;
 
@@ -81,6 +82,10 @@ impl LockFile {
     pub fn to_toml(&self) -> DppResult<String> {
         Ok(toml::to_string_pretty(self)?)
     }
+
+    pub fn write(&self, path: &Path) -> DppResult<()> {
+        write_replace_atomic(path, self.to_toml()?.as_bytes())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -98,6 +103,8 @@ pub struct LockMetadata {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LockPackage {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub package_id: Option<String>,
     pub source: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_id: Option<String>,

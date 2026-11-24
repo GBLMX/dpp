@@ -7,9 +7,14 @@ use crate::pack_format::PackFormat;
 pub enum DppError {
     #[error("world directory does not exist: {0}")]
     WorldNotFound(PathBuf),
+    #[error("server root is required for this command; pass --server-root")]
+    ServerRootMissing,
 
+    #[error("server root directory does not exist: {0}")]
+    InstanceRootNotFound(PathBuf),
     #[error("invalid host-provided datapack declaration: {0}")]
     HostProvidedInvalid(PathBuf),
+
     #[error("level.dat not found in world: {0}")]
     LevelDatMissing(PathBuf),
 
@@ -64,6 +69,18 @@ pub enum DppError {
 
     #[error("unsupported lock schema {found}; this dpp supports schema {supported}")]
     UnsupportedLockSchema { found: u32, supported: u32 },
+
+    #[error("unsupported index schema {found}; this dpp supports schema {supported}")]
+    UnsupportedIndexSchema { found: u32, supported: u32 },
+
+    #[error("unsupported pack manifest schema {found}; this dpp supports schema {supported}")]
+    UnsupportedPackManifestSchema { found: u32, supported: u32 },
+
+    #[error("invalid dpp.toml in pack {path}: {reason}")]
+    PackManifestInvalid { path: PathBuf, reason: String },
+
+    #[error("dpp.toml in pack {path} is too large: {size} bytes")]
+    PackManifestTooLarge { path: PathBuf, size: u64 },
 
     #[error("lock target pack format {lock} does not match manifest pack format {manifest}")]
     PackFormatMismatch {

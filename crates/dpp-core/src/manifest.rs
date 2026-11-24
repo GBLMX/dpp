@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{DppError, DppResult};
 use crate::pack_format::PackFormat;
-use crate::paths::write_new_atomic;
+use crate::paths::{write_new_atomic, write_replace_atomic};
 
 pub const MANIFEST_SCHEMA: u32 = 1;
 pub const DEFAULT_LOAD_WEIGHT: u16 = 50;
@@ -94,6 +94,10 @@ impl WorldManifest {
         }
         write_new_atomic(path, self.to_toml()?.as_bytes())
     }
+
+    pub fn write(&self, path: &Path) -> DppResult<()> {
+        write_replace_atomic(path, self.to_toml()?.as_bytes())
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -140,6 +144,8 @@ pub struct DependencyDetail {
     pub version: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
 }
 
 #[cfg(test)]
@@ -179,6 +185,7 @@ default_weight = 50
             Some(&Dependency::Detailed(DependencyDetail {
                 version: ">=5.5.0".into(),
                 source: Some("modrinth".into()),
+                project: None,
             }))
         );
     }
