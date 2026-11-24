@@ -2,7 +2,7 @@
 
 Minecraft Java Edition 数据包（datapack）包管理器。只管理原版数据包：不管理 mod、不管理资源包、不注入游戏、不执行包内脚本。
 
-> 状态：Rust workspace 已实现 `new` / `init` / `add` / `remove` / `install` / `update` / `apply` / `status` / `check` / `search` / `inspect` / `build-pack` / `host` / `snapshot` / `config` / `adapter`。`docs/` 是当前设计、激活语义和可行性结论；实现以这些文档为准。
+> 状态：Rust workspace 已实现 `new` / `init` / `add` / `remove` / `install` / `update` / `apply` / `status` / `order` / `check` / `search` / `inspect` / `build-pack` / `host` / `snapshot` / `config` / `adapter`。`docs/` 是当前设计、激活语义和可行性结论；实现以这些文档为准。
 
 ## 解决的问题
 
