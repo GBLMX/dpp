@@ -141,6 +141,31 @@ pub enum DppError {
         manifest: PackFormat,
         world: PackFormat,
     },
+
+    #[error("failed to read pack archive {path}: {source}")]
+    PackZip {
+        path: PathBuf,
+        #[source]
+        source: zip::result::ZipError,
+    },
+
+    #[error("pack.mcmeta not found at archive root: {0}")]
+    PackMetaMissing(PathBuf),
+
+    #[error("pack.mcmeta is nested at {entry}, not at archive root: {path}")]
+    PackMetaNested { path: PathBuf, entry: String },
+
+    #[error("refusing non-zip pack archive: {0}")]
+    PackNotZip(PathBuf),
+
+    #[error("unsafe path in pack archive {path}: {entry}")]
+    PackUnsafeEntry { path: PathBuf, entry: String },
+
+    #[error("pack archive {path} does not support data pack format {target}")]
+    PackIncompatible { path: PathBuf, target: PackFormat },
+
+    #[error("pack.mcmeta in {path} is too large: {size} bytes")]
+    PackMetaTooLarge { path: PathBuf, size: u64 },
 }
 
 pub type DppResult<T> = Result<T, DppError>;

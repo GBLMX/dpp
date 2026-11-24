@@ -42,8 +42,9 @@ Rust workspace 骨架已建立；目前可运行：
 - `dpp status`
 - `dpp check`
 - `dpp search <query> [--mc-version <VERSION>] [--limit <N>]`
+- `dpp inspect <zip> --pack-format <FORMAT>`
 
-`init` 解析 `level.dat` 的 `Data.Version` / `DataVersion`，自动识别 MC 版本与 data pack format；`--mc-version` / `--pack-format` 可覆盖。快照版本若找不到本地 client/server jar，会要求显式指定 format。`status` 显示检测结果；`check` 校验 manifest / world / lock 一致性。
+`init` 解析 `level.dat` 的 `Data.Version` / `DataVersion`，自动识别 MC 版本与 data pack format；`--mc-version` / `--pack-format` 可覆盖。快照版本若找不到本地 client/server jar，会要求显式指定 format。`status` 显示检测结果；`check` 校验 manifest / world / lock 一致性；`inspect` 校验本地 zip 根目录的 `pack.mcmeta` 与目标格式。
 
 ## 开发
 

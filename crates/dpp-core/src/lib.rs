@@ -5,6 +5,7 @@ pub mod level_dat;
 pub mod lock;
 pub mod manifest;
 pub mod minecraft;
+pub mod pack_archive;
 pub mod pack_format;
 pub mod pack_meta;
 pub mod paths;
@@ -20,6 +21,7 @@ pub use minecraft::{
     JarVersion, adjacent_server_jar, detect_pack_format, find_version_jar, minecraft_dir,
     pack_format_for_release, read_version_json_from_jar,
 };
+pub use pack_archive::{PackInspection, inspect_zip};
 pub use pack_format::{PackFormat, ParsePackFormatError};
 pub use pack_meta::{
     Features, Filter, FilterBlock, FormatValue, LegacyFormats, OverlayEntry, Overlays,

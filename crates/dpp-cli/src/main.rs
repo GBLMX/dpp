@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use dpp_core::{
     DppError, LevelInfo, LockFile, PackFormat, WorldManifest, WorldPaths, WorldSection,
-    adjacent_server_jar, detect_pack_format, find_version_jar,
+    adjacent_server_jar, detect_pack_format, find_version_jar, inspect_zip,
 };
 use dpp_modrinth::{ModrinthClient, default_user_agent};
 
@@ -30,6 +30,8 @@ enum Command {
     Check,
     /// Search Modrinth datapacks.
     Search(SearchArgs),
+    /// Inspect a local datapack zip against a target format.
+    Inspect(InspectArgs),
 }
 
 #[derive(Debug, Args)]
@@ -56,6 +58,16 @@ struct SearchArgs {
     limit: u8,
 }
 
+#[derive(Debug, Args)]
+struct InspectArgs {
+    /// Path to a datapack zip.
+    path: PathBuf,
+
+    /// Target data pack format, e.g. `121` or `121.0`.
+    #[arg(long, value_name = "FORMAT")]
+    pack_format: String,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     match run(cli) {
@@ -72,13 +84,14 @@ fn run(cli: Cli) -> Result<()> {
 
     match command {
         Command::Search(args) => search(args),
+        Command::Inspect(args) => inspect_pack(args),
         command => {
             let paths = WorldPaths::discover(world.as_deref())?;
             match command {
                 Command::Init(args) => init_world(&paths, args),
                 Command::Status => show_status(&paths),
                 Command::Check => check_world(&paths),
-                Command::Search(_) => unreachable!(),
+                Command::Search(_) | Command::Inspect(_) => unreachable!(),
             }
         }
     }
@@ -150,6 +163,26 @@ fn search(args: SearchArgs) -> Result<()> {
         if !hit.description.is_empty() {
             println!("  {}", hit.description);
         }
+    }
+
+    Ok(())
+}
+
+fn inspect_pack(args: InspectArgs) -> Result<()> {
+    let format = args
+        .pack_format
+        .parse::<PackFormat>()
+        .context("invalid --pack-format")?;
+    let inspection = inspect_zip(&args.path, format)?;
+
+    println!("ok: {}", args.path.display());
+    println!("pack format: {format}");
+    println!("files: {}", inspection.file_count);
+    println!("uncompressed: {} bytes", inspection.total_uncompressed_size);
+
+    let features = inspection.meta.feature_flags();
+    if !features.is_empty() {
+        println!("features: {}", features.join(", "));
     }
 
     Ok(())

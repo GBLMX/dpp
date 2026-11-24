@@ -22,6 +22,7 @@ flate2.workspace = true
 predicates.workspace = true
 serde.workspace = true
 tempfile.workspace = true
+zip.workspace = true
 
 [lints]
 workspace = true

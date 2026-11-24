@@ -8,6 +8,9 @@ use flate2::write::GzEncoder;
 use predicates::prelude::*;
 use serde::Serialize;
 use tempfile::TempDir;
+use zip::CompressionMethod;
+use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 fn dpp() -> Command {
     Command::cargo_bin("dpp").expect("dpp binary should build")
@@ -51,6 +54,19 @@ fn write_level_dat(world: &Path, version: &str, snapshot: bool) {
     let mut encoder = GzEncoder::new(Vec::new(), Compression::default());
     encoder.write_all(&nbt).unwrap();
     fs::write(world.join("level.dat"), encoder.finish().unwrap()).unwrap();
+}
+
+fn write_pack_zip(path: &Path, pack_meta: &str) {
+    let file = fs::File::create(path).unwrap();
+    let mut writer = ZipWriter::new(file);
+    writer
+        .start_file(
+            "pack.mcmeta",
+            SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+        )
+        .unwrap();
+    writer.write_all(pack_meta.as_bytes()).unwrap();
+    writer.finish().unwrap();
 }
 
 fn world_with_version(version: &str, snapshot: bool) -> TempDir {
@@ -262,5 +278,46 @@ fn search_rejects_invalid_limit() {
         .failure()
         .stderr(predicate::str::contains(
             "--limit must be between 1 and 100",
+        ));
+}
+
+#[test]
+fn inspect_accepts_and_rejects_pack_zip() {
+    let directory = tempfile::tempdir().unwrap();
+    let archive = directory.path().join("pack.zip");
+    write_pack_zip(
+        &archive,
+        r#"{
+            "pack": {
+                "description": "test",
+                "min_format": [121, 0],
+                "max_format": [121, 0]
+            }
+        }"#,
+    );
+
+    dpp()
+        .args([
+            "inspect",
+            archive.to_str().unwrap(),
+            "--pack-format",
+            "121.0",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok:"))
+        .stdout(predicate::str::contains("pack format: 121.0"));
+
+    dpp()
+        .args([
+            "inspect",
+            archive.to_str().unwrap(),
+            "--pack-format",
+            "88.0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "does not support data pack format 88.0",
         ));
 }

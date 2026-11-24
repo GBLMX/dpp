@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use serde::Deserialize;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -133,6 +135,13 @@ pub struct Dependency {
     pub file_name: Option<String>,
     #[serde(default)]
     pub dependency_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadReport {
+    pub path: PathBuf,
+    pub sha512: String,
+    pub size: u64,
 }
 
 #[cfg(test)]
