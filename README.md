@@ -2,7 +2,7 @@
 
 Minecraft Java Edition 数据包（datapack）包管理器。只管理原版数据包：不管理 mod、不管理资源包、不注入游戏、不执行包内脚本。
 
-> 状态：设计阶段，尚无可用代码。`docs/` 是当前设计、激活语义和可行性结论；实现以这些文档为准。
+> 状态：Rust workspace 骨架已建立；核心包管理功能尚未实现。`docs/` 是当前设计、激活语义和可行性结论；实现以这些文档为准。
 
 ## 解决的问题
 
@@ -32,6 +32,31 @@ Minecraft Java Edition 数据包（datapack）包管理器。只管理原版数�
 | [docs/feasibility.md](docs/feasibility.md) | Modrinth / pack format / pacman 调研、风险与 MVP |
 | [docs/research-toolchain.md](docs/research-toolchain.md) | 现代开发工具链、lock/cache/供应链/Rust 工具调研 |
 | [docs/research-datapack.md](docs/research-datapack.md) | MC 数据包生态、Smithed、beet/Spyglass/GameTest |
+
+## 当前实现
+
+Rust workspace 骨架已建立；目前可运行：
+
+- `dpp --version`
+- `dpp init [--mc-version <VERSION>] [--pack-format <FORMAT>]`
+- `dpp status`
+- `dpp check`
+
+`init` 目前只检查 `level.dat` 是否存在并创建 `dpp.toml` 与 `.dpp/`；尚不解析 NBT，MC 版本/format 需要手动指定。其余命令见下方“计划中的命令”。
+
+## 开发
+
+```sh
+cargo build
+cargo test
+cargo clippy --all-targets -- -D warnings
+cargo run -p dpp-cli -- --help
+```
+
+布局：
+
+- `crates/dpp-core`：manifest/lock/pack format/path 等核心类型。
+- `crates/dpp-cli`：`dpp` 二进制与 CLI 集成测试。
 
 ## 计划中的命令
 
@@ -65,4 +90,4 @@ dpp cache clean
 
 ## 仓库状态
 
-当前只有设计文档，没有代码、构建脚本或依赖。后续实现建议从包层事务、lock/index、Modrinth 源和 `apply` 状态模型开始。
+Rust workspace 骨架已建立，当前只实现 `init`/`status`/`check`。尚未实现 Modrinth 源、lock 求解、安装事务、snapshot、apply、RCON 和加载顺序报告；这些按 [docs/feasibility.md](docs/feasibility.md) 的顺序推进。
