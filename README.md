@@ -30,6 +30,8 @@ Minecraft Java Edition 数据包（datapack）包管理器。只管理原版数�
 | [docs/apply.md](docs/apply.md) | `/reload` 边界、apply 决策、RCON/MSMP、卸载清理 |
 | [docs/load-order.md](docs/load-order.md) | 加载顺序权威与 MVP 取舍 |
 | [docs/feasibility.md](docs/feasibility.md) | Modrinth / pack format / pacman 调研、风险与 MVP |
+| [docs/research-toolchain.md](docs/research-toolchain.md) | 现代开发工具链、lock/cache/供应链/Rust 工具调研 |
+| [docs/research-datapack.md](docs/research-datapack.md) | MC 数据包生态、Smithed、beet/Spyglass/GameTest |
 
 ## 计划中的命令
 

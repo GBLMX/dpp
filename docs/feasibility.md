@@ -106,6 +106,7 @@ pacman 的教训：事务前算完、校验完，再落地；本地数据库要�
 
 - **packwiz**：modpack 导向；datapack 支持依赖 loader mod 的 `datapack-folder`，不是纯原版世界管理器。
 - **DPM**（npm）：datapack library/package manager，周下载约 50，未形成生态。
+- **Smithed**：pack 数据库/launcher/conventions + Weld + v2 API；最接近的数据包生态，公开材料未见 world lock/原子安装/`apply`。详见 [research-datapack.md](research-datapack.md)。
 - **Vanilla Tweaks installer**： curated 包安装器，无依赖/锁文件/求解。
 
 “纯原版 + world lock + 原子安装 + 激活语义”目前是空位。
@@ -163,6 +164,11 @@ pacman 的教训：事务前算完、校验完，再落地；本地数据库要�
 7. pubgrub 求解 + 冲突校验（在候选模型稳定之后）。
 8. 顺序报告/`dpp order`。
 9. 二期：签名、MSMP、TUI、level.dat 写入。
+
+## 延伸阅读
+
+- [research-toolchain.md](research-toolchain.md)
+- [research-datapack.md](research-datapack.md)
 
 ## 参考
 

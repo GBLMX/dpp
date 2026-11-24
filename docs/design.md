@@ -233,6 +233,12 @@ priority = 20
 
 同一 `id` 出现在多个源时默认报歧义，要求 `source:id`；不静默取第一个源。
 
+### 6.2.1 二期候选：Smithed
+
+- Smithed v2 API 提供 pack/version/`supports`/datapack 下载 URL/精确版本依赖；当前响应未观察到 checksum。
+- 若接入为 `type = "smithed"`，dpp 必须本地计算 sha512 并 pin，首次信任标记为 `computed/unverified`；依赖映射为精确版本。
+- 不把 Smithed 响应当签名或校验和源。详见 [research-datapack.md](research-datapack.md)。
+
 ### 6.3 求解
 
 - 目标：世界 MC 版本 → 目标 pack format。优先读本地 client/server jar 的 `version.json` 的 `pack_version.data_major/data_minor`；否则使用随 dpp 发布的内置表；允许世界清单显式覆盖。
@@ -272,6 +278,12 @@ priority = 20
 - 崩溃恢复：journal 记录 `prepared/committing/committed`；下次启动回滚或补完。
 - 预检磁盘空间；失败必须在任何 rename 之前返回。
 - 只删除自己管理的 install name；外来包不动。
+
+### 7.4 严格模式
+
+- `--locked`：manifest 与 lock 不一致时失败，不改写 lock；仍允许为缺失 artifact 下载。
+- `--offline`：只用缓存；缺任何 artifact 即失败。
+- 不定义 `--frozen`：Cargo 的语义是 `--locked + --offline`，uv 是“用 lock 但不检查新鲜度”，容易混淆；dpp 用显式组合。见 [research-toolchain.md](research-toolchain.md)。
 
 ## 8. 加载顺序
 

@@ -8,6 +8,8 @@
 2. [apply.md](apply.md) — `/reload` 的真实边界、apply 决策矩阵、RCON/MSMP、卸载清理。
 3. [load-order.md](load-order.md) — 加载顺序的权威来源与 MVP 取舍。
 4. [feasibility.md](feasibility.md) — Modrinth、pack format、pacman 参考、风险与 MVP。
+5. [research-toolchain.md](research-toolchain.md) — lock/cache/严格模式/供应链/Rust 工具链调研。
+6. [research-datapack.md](research-datapack.md) — MC 数据包生态、Smithed、beet/Spyglass/GameTest。
 
 ## 文档定位
 
@@ -17,6 +19,8 @@
 | [apply.md](apply.md) | 运行时激活与状态语义 | 规范 |
 | [load-order.md](load-order.md) | 加载顺序决策记录 | 规范 |
 | [feasibility.md](feasibility.md) | 调研与可行性记录 | 参考（不是接口契约） |
+| [research-toolchain.md](research-toolchain.md) | 现代开发工具链调研 | 参考（不是接口契约） |
+| [research-datapack.md](research-datapack.md) | MC 数据包生态/工具链调研 | 参考（不是接口契约） |
 
 ## 术语
 
