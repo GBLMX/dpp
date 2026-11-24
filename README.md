@@ -42,7 +42,7 @@ Rust workspace 骨架已建立；目前可运行：
 - `dpp status`
 - `dpp check`
 
-`init` 目前只检查 `level.dat` 是否存在并创建 `dpp.toml` 与 `.dpp/`；尚不解析 NBT，MC 版本/format 需要手动指定。其余命令见下方“计划中的命令”。
+`init` 解析 `level.dat` 的 `Data.Version` / `DataVersion`，自动识别 MC 版本与 data pack format；`--mc-version` / `--pack-format` 可覆盖。快照版本若找不到本地 client/server jar，会要求显式指定 format。`status` 显示检测结果；`check` 校验 manifest / world / lock 一致性。
 
 ## 开发
 

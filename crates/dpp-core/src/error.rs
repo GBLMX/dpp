@@ -68,6 +68,72 @@ pub enum DppError {
         lock: PackFormat,
         manifest: PackFormat,
     },
+
+    #[error("failed to decompress level.dat {path}: {source}")]
+    LevelDatGzip {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("failed to parse level.dat {path}: {source}")]
+    LevelDatNbt {
+        path: PathBuf,
+        #[source]
+        source: fastnbt::error::Error,
+    },
+
+    #[error("level.dat does not contain Data.Version.Name: {0}")]
+    LevelDatVersionMissing(PathBuf),
+
+    #[error("failed to open Minecraft jar {path}: {source}")]
+    JarOpen {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("failed to read Minecraft jar {path}: {source}")]
+    JarZip {
+        path: PathBuf,
+        #[source]
+        source: zip::result::ZipError,
+    },
+
+    #[error("failed to read version.json in {path}: {source}")]
+    JarEntry {
+        path: PathBuf,
+        #[source]
+        source: io::Error,
+    },
+
+    #[error("failed to parse version.json in {path}: {source}")]
+    JarJson {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error("jar {path} contains Minecraft {found}, expected {expected}")]
+    JarVersionMismatch {
+        path: PathBuf,
+        expected: String,
+        found: String,
+    },
+
+    #[error(
+        "could not determine data pack format for Minecraft {mc_version} (snapshot: {snapshot}); pass --pack-format"
+    )]
+    PackFormatUnknown { mc_version: String, snapshot: bool },
+
+    #[error("manifest targets Minecraft {manifest}, but world is {world}")]
+    ManifestWorldMcVersionMismatch { manifest: String, world: String },
+
+    #[error("manifest targets pack format {manifest}, but world is {world}")]
+    ManifestWorldPackFormatMismatch {
+        manifest: PackFormat,
+        world: PackFormat,
+    },
 }
 
 pub type DppResult<T> = Result<T, DppError>;
