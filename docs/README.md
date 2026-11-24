@@ -1,6 +1,7 @@
 # dpp 设计文档
 
 状态：Rust workspace 骨架已建立，核心功能尚未实现。文档中的命令、字段和目录结构是当前契约；实现前可以修改，但修改后必须同步更新这里。
+状态：Rust workspace 已实现 `new` / `init` / `add` / `remove` / `install` / `update` / `apply` / `status` / `order` / `check` / `search` / `inspect` / `build-pack` / `host` / `snapshot` / `config` / `adapter`。命令、字段和目录结构以这里的文档为契约；实现与文档冲突时先修实现或同步更新文档。
 
 ## 阅读顺序
 

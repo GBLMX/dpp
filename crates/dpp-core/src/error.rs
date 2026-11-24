@@ -8,6 +8,8 @@ pub enum DppError {
     #[error("world directory does not exist: {0}")]
     WorldNotFound(PathBuf),
 
+    #[error("invalid host-provided datapack declaration: {0}")]
+    HostProvidedInvalid(PathBuf),
     #[error("level.dat not found in world: {0}")]
     LevelDatMissing(PathBuf),
 
@@ -166,6 +168,15 @@ pub enum DppError {
 
     #[error("pack.mcmeta in {path} is too large: {size} bytes")]
     PackMetaTooLarge { path: PathBuf, size: u64 },
+
+    #[error("pack build source is not a directory: {0}")]
+    PackBuildSource(PathBuf),
+
+    #[error("pack build output must be outside the source tree: {0}")]
+    PackBuildOutputInsideSource(PathBuf),
+
+    #[error("invalid pack build {path}: {reason}")]
+    PackBuildInvalid { path: PathBuf, reason: String },
 }
 
 pub type DppResult<T> = Result<T, DppError>;

@@ -1,0 +1,10 @@
+[package]
+id = "local:demo"
+name = "dpp demo"
+version = "0.1.0"
+mc_versions = ["26.3"]
+pack_format = [121, 0]
+description = "Minimal data pack using dpp:stdlib."
+
+[dependencies]
+"dpp:stdlib" = ">=0.1.0"

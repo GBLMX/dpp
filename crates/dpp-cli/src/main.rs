@@ -1,3 +1,4 @@
+use std::fs;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
@@ -6,6 +7,11 @@ use clap::{Args, Parser, Subcommand};
 use dpp_core::{
     DppError, LevelInfo, LockFile, PackFormat, WorldManifest, WorldPaths, WorldSection,
     adjacent_server_jar, detect_pack_format, find_version_jar, inspect_zip,
+    AdapterEvent, AdapterManifest, AdapterSession, AppliedFile, BuildPackOptions, DppError,
+    HostLockFile, HostProfile, HostProvidedFile, HostProvidedPack, IndexFile, InstancePaths,
+    LevelInfo, LockFile, PackFormat, PackManifest, WorldManifest, WorldPaths, WorldSection,
+    adjacent_server_jar, build_pack, detect_host, detect_pack_format, find_version_jar,
+    inspect_zip, sha512_file,
 };
 use dpp_modrinth::{ModrinthClient, default_user_agent};
 
@@ -24,8 +30,14 @@ struct Cli {
 enum Command {
     /// Initialize dpp state in a Minecraft world.
     Init(InitArgs),
+    /// Create a new Beet-compatible datapack project.
+    New(NewArgs),
+    /// Validate and deterministically package a datapack directory.
+    BuildPack(BuildPackArgs),
     /// Show the world manifest and lock status.
     Status,
+    /// Report advisory datapack load order; never writes level.dat or runs commands.
+    Order(OrderArgs),
     /// Validate manifest, lock, and dpp state directories.
     Check,
     /// Search Modrinth datapacks.
@@ -44,7 +56,99 @@ struct InitArgs {
     #[arg(long, value_name = "FORMAT")]
     pack_format: Option<String>,
 }
+
 #[derive(Debug, Args)]
+struct NewArgs {
+    /// Project / pack name; also used as the default directory.
+    name: String,
+
+    /// Target directory; defaults to the project name.
+    #[arg(long, value_name = "PATH")]
+    dir: Option<PathBuf>,
+
+    /// Target Minecraft version.
+    #[arg(long, default_value = "26.3", value_name = "VERSION")]
+    mc_version: String,
+
+    /// Target data pack format.
+    #[arg(long, default_value = "121.0", value_name = "FORMAT")]
+    pack_format: String,
+}
+
+#[derive(Debug, Args)]
+struct BuildPackArgs {
+    /// Pack source directory, or a Beet project root containing `src/`.
+    #[arg(default_value = ".")]
+    path: PathBuf,
+
+    /// Output zip path; defaults to <id>-<version>.zip beside the source.
+    #[arg(long, value_name = "ZIP")]
+    output: Option<PathBuf>,
+
+    /// URL to include in the printed static-source index entry.
+    #[arg(long, value_name = "URL")]
+    url: Option<String>,
+
+    /// Print only the JSON index entry.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct OrderArgs {
+    /// Print the read-only `/datapack enable` suggestions.
+    #[arg(long)]
+    print_commands: bool,
+
+    /// Print the report as JSON.
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Debug, Args)]
+struct ApplyArgs {
+    /// Print the activation plan without writing applied.toml.
+    #[arg(long)]
+    dry_run: bool,
+
+    /// Record a manual restart/rejoin instead of the default next-start marker.
+    #[arg(long)]
+    manual: bool,
+
+    /// Send `/reload` through localhost RCON instead of manual activation.
+    #[arg(long)]
+    rcon: bool,
+
+    /// Server log to inspect after sending reload.
+    #[arg(long, value_name = "PATH")]
+    log: Option<PathBuf>,
+
+    /// Remove a staged plan without touching datapacks.
+    #[arg(long)]
+    abort: bool,
+
+    /// Restore the most recent pre-apply snapshot.
+    #[arg(long)]
+    rollback: bool,
+}
+
+#[derive(Debug, Args)]
+struct InstallArgs {
+    /// Write a staged plan instead of committing datapacks.
+    #[arg(long)]
+    stage: bool,
+}
+
+#[derive(Debug, Args)]
+struct UpdateArgs {
+    /// Write a staged plan instead of committing datapacks.
+    #[arg(long)]
+    stage: bool,
+}
+#[derive(Debug, Args)]
+    /// Write a staged plan instead of committing datapacks.
+    #[arg(long)]
+    stage: bool,
 struct SearchArgs {
     /// Search query.
     query: String,
@@ -83,13 +187,16 @@ fn run(cli: Cli) -> Result<()> {
     let Cli { world, command } = cli;
 
     match command {
+        Command::New(args) => new_project(args),
+        Command::BuildPack(args) => build_pack_command(args),
         Command::Search(args) => search(args),
         Command::Inspect(args) => inspect_pack(args),
         command => {
             let paths = WorldPaths::discover(world.as_deref())?;
             match command {
                 Command::Init(args) => init_world(&paths, args),
-                Command::Status => show_status(&paths),
+                Command::Status => show_status(&paths, server_root.as_deref()),
+                Command::Order(args) => show_order(&paths, args),
                 Command::Check => check_world(&paths),
                 Command::Search(_) | Command::Inspect(_) => unreachable!(),
             }
@@ -188,7 +295,7 @@ fn inspect_pack(args: InspectArgs) -> Result<()> {
     Ok(())
 }
 
-fn show_status(paths: &WorldPaths) -> Result<()> {
+fn show_status(paths: &WorldPaths, server_root: Option<&std::path::Path>) -> Result<()> {
     paths.require_level_dat()?;
 
     let level = LevelInfo::load(&paths.level_dat())?;
@@ -236,7 +343,7 @@ fn show_status(paths: &WorldPaths) -> Result<()> {
         Err(error) => println!("Detected pack format: unknown ({error})"),
     }
 
-    match lock {
+    match &lock {
         Some(lock) => {
             println!("Lock: {} packages", lock.packages.len());
             if let Some(pack_format) = lock.target_pack_format() {
@@ -252,6 +359,53 @@ fn show_status(paths: &WorldPaths) -> Result<()> {
         println!("State: missing (run `dpp init`)");
     }
 
+    Ok(())
+}
+
+fn show_order(paths: &WorldPaths, args: OrderArgs) -> Result<()> {
+    let report = dpp_ops::order_world(paths)?;
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&report)?);
+        return Ok(());
+    }
+
+    let names = |names: &[String]| {
+        if names.is_empty() {
+            "none".to_owned()
+        } else {
+            names.join(", ")
+        }
+    };
+    let expected: Vec<String> = report
+        .expected
+        .iter()
+        .map(|package| package.install_name.clone())
+        .collect();
+    println!("Expected: {}", names(&expected));
+    match &report.observed {
+        Some(observed) => println!("Observed: {}", names(observed)),
+        None => println!("Observed: unknown"),
+    }
+    println!("Order: {}", report.status);
+    if !report.missing.is_empty() {
+        println!("Missing: {}", report.missing.join(", "));
+    }
+    if !report.disabled.is_empty() {
+        println!("Disabled: {}", report.disabled.join(", "));
+    }
+    for warning in &report.warnings {
+        println!("Warning: {warning}");
+    }
+    if args.print_commands {
+        if report.actions.is_empty() {
+            println!("Actions: none");
+        } else {
+            println!("Actions (run in game/console):");
+            for action in &report.actions {
+                println!("{action}");
+            }
+        }
+    }
     Ok(())
 }
 

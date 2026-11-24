@@ -1,5 +1,7 @@
 # 激活：apply、reload 与状态
 
+> 当前实现：`install/update/remove --stage` 生成 `staging/<txid>/plan.toml`；`dpp apply [--dry-run] [--manual] [--rcon] [--log <PATH>] [--abort] [--rollback]` 记录 `.dpp/applied.toml`；存在 plan 时先原子提交；`--rcon` 通过 localhost RCON 发送 `/reload`，检查 `datapack list enabled`，`--log` 检查追加日志；`--abort` 删除 staged plan，`--rollback` 恢复最近的 `pre-apply-*` 快照。失败时不写 applied。
+
 ## 1. 为什么分离
 
 Minecraft 没有“安装后自动生效”的包管理器语义。磁盘上的 `datapacks/` 只有在以下时机才会进入运行层：
@@ -148,6 +150,7 @@ verification = "pack_list_ok"  # sent | log_ok | pack_list_ok | unverified
 ```text
 Desired:   lock 8f3a...  (26.3, format 121.0)
 Committed: 8f3a...       (matches)
+Journal:   none            (no pending transaction)
 Staged:    none
 Applied:   8f3a...       via rcon, pack list verified
 Observed:  server running, 12/12 packs enabled, no foreign packs

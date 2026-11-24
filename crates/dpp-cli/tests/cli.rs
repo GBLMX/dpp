@@ -1,6 +1,8 @@
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::Path;
+use std::thread;
 
 use assert_cmd::Command;
 use flate2::Compression;
@@ -26,9 +28,18 @@ struct FixtureVersion {
 
 #[derive(Serialize)]
 #[serde(rename_all = "PascalCase")]
+struct FixtureDataPacks {
+    enabled: Vec<String>,
+    disabled: Vec<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "PascalCase")]
 struct FixtureData {
     version: FixtureVersion,
     data_version: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data_packs: Option<FixtureDataPacks>,
 }
 
 #[derive(Serialize)]
@@ -38,7 +49,20 @@ struct Fixture {
 }
 
 fn write_level_dat(world: &Path, version: &str, snapshot: bool) {
+    write_level_dat_packs(world, version, snapshot, None);
+}
+
+fn write_level_dat_packs(
+    world: &Path,
+    version: &str,
+    snapshot: bool,
+    packs: Option<(&[&str], &[&str])>,
+) {
     let data_version = if snapshot { 5100 } else { 5023 };
+    let data_packs = packs.map(|(enabled, disabled)| FixtureDataPacks {
+        enabled: enabled.iter().map(ToString::to_string).collect(),
+        disabled: disabled.iter().map(ToString::to_string).collect(),
+    });
     let fixture = Fixture {
         data: FixtureData {
             version: FixtureVersion {
@@ -47,6 +71,7 @@ fn write_level_dat(world: &Path, version: &str, snapshot: bool) {
                 id: data_version,
             },
             data_version,
+            data_packs,
         },
     };
 

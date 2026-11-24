@@ -13,6 +13,8 @@ pub struct LevelInfo {
     pub mc_version: String,
     pub snapshot: bool,
     pub data_version: Option<i32>,
+    pub enabled_packs: Option<Vec<String>>,
+    pub disabled_packs: Vec<String>,
 }
 
 impl LevelInfo {
@@ -51,10 +53,22 @@ impl LevelInfo {
             .filter(|name| !name.trim().is_empty())
             .ok_or_else(|| DppError::LevelDatVersionMissing(path.to_path_buf()))?;
 
+        let enabled_packs = level_dat
+            .data
+            .data_packs
+            .as_ref()
+            .and_then(|packs| packs.enabled.clone());
+        let disabled_packs = level_dat
+            .data
+            .data_packs
+            .and_then(|packs| packs.disabled)
+            .unwrap_or_default();
         Ok(Self {
             mc_version,
             snapshot: version.snapshot,
             data_version: level_dat.data.data_version.or(version.id),
+            enabled_packs,
+            disabled_packs,
         })
     }
 }
@@ -72,6 +86,17 @@ struct Data {
     version: Option<Version>,
     #[serde(default)]
     data_version: Option<i32>,
+    #[serde(default)]
+    data_packs: Option<DataPacks>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+struct DataPacks {
+    #[serde(default)]
+    enabled: Option<Vec<String>>,
+    #[serde(default)]
+    disabled: Option<Vec<String>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -103,9 +128,17 @@ fn write_fixture(path: &Path) {
 
     #[derive(Serialize)]
     #[serde(rename_all = "PascalCase")]
+    struct FixtureDataPacks {
+        enabled: Vec<String>,
+        disabled: Vec<String>,
+    }
+
+    #[derive(Serialize)]
+    #[serde(rename_all = "PascalCase")]
     struct FixtureData {
         version: FixtureVersion,
         data_version: i32,
+        data_packs: FixtureDataPacks,
     }
 
     #[derive(Serialize)]
@@ -122,6 +155,10 @@ fn write_fixture(path: &Path) {
                 id: 5023,
             },
             data_version: 5023,
+            data_packs: FixtureDataPacks {
+                enabled: vec!["vanilla".into(), "file/0010_a".into()],
+                disabled: vec!["file/0020_b".into()],
+            },
         },
     };
 
@@ -145,6 +182,11 @@ mod tests {
         assert_eq!(info.mc_version, "26.3");
         assert!(!info.snapshot);
         assert_eq!(info.data_version, Some(5023));
+        assert_eq!(
+            info.enabled_packs,
+            Some(vec!["vanilla".into(), "file/0010_a".into()])
+        );
+        assert_eq!(info.disabled_packs, vec!["file/0020_b"]);
     }
 
     #[test]

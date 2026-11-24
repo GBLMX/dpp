@@ -257,7 +257,7 @@ priority = 20
 `dpp install/update/remove` 直接提交到 `datapacks/`，写 lock/index。下次启动世界时由 MC 加载。
 
 - 不发送 reload。
-- `dpp apply` 只记录“下次启动生效”，不做无意义的重载。
+- `dpp apply` 默认记录“下次启动生效”；`--rcon` 可发送 `/reload`。
 
 ### 7.2 世界运行中
 
@@ -268,6 +268,8 @@ priority = 20
 1. 若存在 staged plan，原子提交到 `datapacks/`，更新 lock/index。
 2. 按 [apply.md](apply.md) 的分类选择 `/reload`、重启、重进世界或拒绝（需要新世界）。
 3. 记录 `applied.toml`，或标记 `manual required`。
+
+> 当前实现：`install/update/remove --stage` 生成 `staging/<txid>/plan.toml`；`dpp apply` 原子提交并支持 `--abort`/`--rollback`。`--rcon` 通过 `DPP_RCON_PASSWORD` 与 localhost RCON 发送 reload，成功后才写 applied marker。
 
 这样“变更阶段不影响运行层”才是契约，而不是口号。若不做 staging，只能把该承诺降级为 best-effort。
 
@@ -295,17 +297,18 @@ priority = 20
 
 | 命令 | 语义 | MVP |
 |---|---|---|
+| `dpp new <name>` | 生成 Beet 兼容数据包骨架；不调用 Beet/Python | 是 |
 | `dpp init` | 识别 world/pack，创建 `dpp.toml` 和 `.dpp/` | 是 |
 | `dpp search <query>` | 搜索 Modrinth（`categories:datapack`） | 是 |
 | `dpp add <pkg>` | 添加直接依赖、求解、锁定、安装 | 是 |
-| `dpp remove <pkg>` | 删除直接依赖并清理孤儿；有 hook 时两阶段 | 是 |
-| `dpp install` | 按 `dpp.toml` + lock 同步包层；`--locked`/`--offline` | 是 |
-| `dpp update [pkg...]` | 重新求解；`--dry-run`/`--json` | 是 |
-| `dpp apply` | 提交 staged plan 并激活；`--dry-run`/`--rcon` | 是（RCON 可选） |
+| `dpp remove <pkg> [--stage]` | 删除直接依赖并清理孤儿；`--stage` 只写 plan | 是 |
+| `dpp install [--stage]` | 按 lock 同步包层；`--stage` 只写 plan | 是 |
+| `dpp update [--stage]` | 重新求解并提交；`--stage` 只写 plan | 是 |
+| `dpp apply [--dry-run] [--manual] [--rcon] [--log PATH] [--abort] [--rollback]` | 提交 staged plan；激活并验证；可 abort/rollback | 是 |
 | `dpp status` | 报告五态；`--json` | 是 |
 | `dpp check` | 哈希、格式、feature flag、外来包、顺序偏差、JSON 语法 | 是 |
 | `dpp snapshot save/restore/list` | 包状态快照，不是世界备份 | 是 |
-| `dpp order [--print-commands]` | 只读报告顺序并打印原生命令 | 是 |
+| `dpp order [--json] [--print-commands]` | 只读报告顺序并打印原生命令 | 是 |
 | `dpp build-pack` | 校验清单/`pack.mcmeta`，确定性打包，输出 sha512/index 条目 | 是 |
 | `dpp source list/add/remove` | 源管理 | 是 |
 | `dpp cache clean` | 清理未被引用的归档 | 是 |

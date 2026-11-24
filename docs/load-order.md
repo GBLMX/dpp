@@ -2,6 +2,8 @@
 
 ## 结论
 
+**实现状态**：只读 `dpp order [--json] [--print-commands]` 已实现；`level.dat` 写入和 RCON 自动重排仍不在 MVP。
+
 **MVP：加载顺序是 advisory，不是 dpp 能强制保证的状态。**
 
 - 权威顺序在 `level.dat` 的 `Data.DataPacks.Enabled`，或游戏内 `/datapack enable ... first|last|before|after`。

@@ -35,6 +35,10 @@ impl WorldPaths {
         self.root.join("level.dat")
     }
 
+    pub fn session_lock(&self) -> PathBuf {
+        self.root.join("session.lock")
+    }
+
     pub fn manifest(&self) -> PathBuf {
         self.root.join("dpp.toml")
     }
@@ -53,6 +57,10 @@ impl WorldPaths {
 
     pub fn applied(&self) -> PathBuf {
         self.state_dir().join("applied.toml")
+    }
+
+    pub fn journal(&self) -> PathBuf {
+        self.state_dir().join("journal.toml")
     }
 
     pub fn staging(&self) -> PathBuf {

@@ -1,0 +1,7 @@
+[package]
+id = "dpp:stdlib"
+name = "dpp stdlib"
+version = "0.1.0"
+mc_versions = ["26.3"]
+pack_format = [121, 0]
+description = "Minimal dpp event, tag, storage, and version-handshake contract."
