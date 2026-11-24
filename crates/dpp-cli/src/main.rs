@@ -47,7 +47,7 @@ enum Command {
     Search(SearchArgs),
     /// Add a datapack dependency and install it.
     Add(AddArgs),
-    /// Remove a direct dependency and its managed files.
+    /// Remove a direct dependency and clean unreachable managed packages.
     Remove(RemoveArgs),
     /// Install every package pinned in lock.toml.
     Install(InstallArgs),
@@ -684,9 +684,30 @@ fn remove_pack(paths: &WorldPaths, args: RemoveArgs) -> Result<()> {
         println!("staged plan: {}", plan.display());
         return Ok(());
     }
-    match report.install_name {
-        Some(install_name) => println!("removed {} ({install_name})", report.id),
+    let target_removed = report
+        .install_name
+        .as_ref()
+        .is_some_and(|name| report.removed.contains(name));
+    match report.install_name.as_deref() {
+        Some(install_name) if target_removed => {
+            println!("removed {} ({install_name})", report.id);
+        }
+        Some(install_name) => {
+            println!(
+                "removed direct dependency {}; {install_name} is still required",
+                report.id
+            );
+        }
         None => println!("removed {}", report.id),
+    }
+    let orphans: Vec<&str> = report
+        .removed
+        .iter()
+        .map(String::as_str)
+        .filter(|name| report.install_name.as_deref() != Some(*name))
+        .collect();
+    if !orphans.is_empty() {
+        println!("removed orphaned packages: {}", orphans.join(", "));
     }
     Ok(())
 }

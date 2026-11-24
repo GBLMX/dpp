@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -193,6 +193,7 @@ pub fn add_package(
 pub struct RemoveReport {
     pub id: String,
     pub install_name: Option<String>,
+    pub removed: Vec<String>,
     pub staged_plan: Option<PathBuf>,
 }
 
@@ -210,24 +211,40 @@ pub fn remove_package(world: &WorldPaths, project: &str, stage: bool) -> Result<
 
     let mut lock = LockFile::load_optional(&world.lock())?.unwrap_or_default();
     let mut index = IndexFile::load_optional(&world.index())?.unwrap_or_default();
-    let mut removed = BTreeSet::new();
-    let mut install_name = None;
-
+    validate_lock_packages(&lock)?;
     for package in &index.packages {
-        if package.id == project {
-            removed.insert(package.install_name.clone());
-            install_name.get_or_insert_with(|| package.install_name.clone());
-        }
+        validate_install_name(&package.install_name)?;
     }
+
+    let mut install_name = None;
     for package in &lock.packages {
         if package.id == project {
-            removed.insert(package.install_name.clone());
+            install_name.get_or_insert_with(|| package.install_name.clone());
+        }
+    }
+    for package in &index.packages {
+        if package.id == project {
             install_name.get_or_insert_with(|| package.install_name.clone());
         }
     }
 
-    lock.packages.retain(|package| package.id != project);
-    index.packages.retain(|package| package.id != project);
+    let reachable = reachable_install_names(world, &manifest, &lock)?;
+    let mut managed = BTreeSet::new();
+    for package in &lock.packages {
+        managed.insert(package.install_name.clone());
+    }
+    for package in &index.packages {
+        managed.insert(package.install_name.clone());
+    }
+    let removed: BTreeSet<String> = managed.difference(&reachable).cloned().collect();
+
+    lock.packages
+        .retain(|package| !removed.contains(&package.install_name));
+    index
+        .packages
+        .retain(|package| !removed.contains(&package.install_name));
+    let removed_names: Vec<String> = removed.iter().cloned().collect();
+
     let staging = create_staging(world)?;
     if stage {
         let plan_dir = staging.keep();
@@ -242,6 +259,7 @@ pub fn remove_package(world: &WorldPaths, project: &str, stage: bool) -> Result<
         return Ok(RemoveReport {
             id: project.to_owned(),
             install_name,
+            removed: removed_names,
             staged_plan: Some(plan),
         });
     }
@@ -258,8 +276,58 @@ pub fn remove_package(world: &WorldPaths, project: &str, stage: bool) -> Result<
     Ok(RemoveReport {
         id: project.to_owned(),
         install_name,
+        removed: removed_names,
         staged_plan: None,
     })
+}
+
+fn find_lock_package<'a>(lock: &'a LockFile, dependency: &str) -> Option<&'a LockPackage> {
+    lock.packages.iter().find(|package| {
+        package.id == dependency
+            || package.package_id.as_deref() == Some(dependency)
+            || package.install_name == dependency
+    })
+}
+
+fn reachable_install_names(
+    world: &WorldPaths,
+    manifest: &WorldManifest,
+    lock: &LockFile,
+) -> Result<BTreeSet<String>> {
+    let mut reachable = BTreeSet::new();
+    let mut queue = VecDeque::new();
+    for dependency in manifest.dependencies.keys() {
+        let package = find_lock_package(lock, dependency)
+            .with_context(|| format!("lock is missing direct dependency {dependency}"))?;
+        queue.push_back(package.install_name.clone());
+    }
+
+    while let Some(install_name) = queue.pop_front() {
+        if !reachable.insert(install_name.clone()) {
+            continue;
+        }
+        let Some(package) = lock
+            .packages
+            .iter()
+            .find(|package| package.install_name == install_name)
+        else {
+            continue;
+        };
+        let Some(installed) = installed_pack_manifest(world, package)? else {
+            continue;
+        };
+        for dependency in installed.dependencies.keys() {
+            let package = find_lock_package(lock, dependency).with_context(|| {
+                format!(
+                    "cannot resolve dependency {dependency} declared by {install_name}; \
+                     refusing to remove possible orphans"
+                )
+            })?;
+            queue.push_back(package.install_name.clone());
+        }
+    }
+
+    Ok(reachable)
 }
 
 pub fn install_world(
@@ -1188,6 +1256,44 @@ mod tests {
     use super::*;
     use dpp_core::HostKind;
 
+    fn test_package(id: &str, install_name: &str) -> LockPackage {
+        LockPackage {
+            id: id.to_owned(),
+            package_id: Some(id.to_owned()),
+            source: "modrinth".to_owned(),
+            project_id: None,
+            version_id: None,
+            version_number: "1.0.0".to_owned(),
+            published_at: None,
+            sha512: "a".repeat(128),
+            sha1: None,
+            size: Some(2),
+            url: None,
+            file_name: None,
+            manifest_hash: None,
+            install_name: install_name.to_owned(),
+            load_weight: DEFAULT_LOAD_WEIGHT,
+        }
+    }
+
+    fn write_installed_pack(
+        world: &WorldPaths,
+        install_name: &str,
+        package_id: &str,
+        dependencies: &[&str],
+    ) {
+        let directory = world.root().join("datapacks").join(install_name);
+        std::fs::create_dir_all(&directory).unwrap();
+        let mut text = format!("[package]\nid = \"{package_id}\"\nversion = \"1.0.0\"\n");
+        if !dependencies.is_empty() {
+            text.push_str("\n[dependencies]\n");
+            for dependency in dependencies {
+                text.push_str(&format!("{dependency} = \"*\"\n"));
+            }
+        }
+        std::fs::write(directory.join("dpp.toml"), text).unwrap();
+    }
+
     #[test]
     fn install_names_are_sanitized() {
         assert_eq!(make_install_name("my pack"), "0050_my_pack");
@@ -1330,6 +1436,144 @@ mod tests {
                 .iter()
                 .any(|snapshot| snapshot.name.starts_with("pre-remove-"))
         );
+    }
+
+    #[test]
+    fn remove_cleans_orphan_chain_and_stale_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+        let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+        paths.ensure_state_dirs().unwrap();
+
+        let mut manifest = WorldManifest::default();
+        manifest
+            .dependencies
+            .insert("root".to_owned(), Dependency::Version("*".to_owned()));
+        manifest.write_new(&paths.manifest()).unwrap();
+
+        let root = test_package("root", "0010_root");
+        let child = test_package("child", "0020_child");
+        let stale = test_package("stale", "0030_stale");
+        let lock = LockFile {
+            packages: vec![root.clone(), child.clone(), stale.clone()],
+            ..LockFile::default()
+        };
+        lock.write(&paths.lock()).unwrap();
+        let index = IndexFile {
+            packages: vec![
+                index_package(&root, Vec::new()),
+                index_package(&child, Vec::new()),
+                index_package(&stale, Vec::new()),
+            ],
+            ..IndexFile::default()
+        };
+        index.write(&paths.index()).unwrap();
+        write_installed_pack(&paths, "0010_root", "root", &["child"]);
+        write_installed_pack(&paths, "0020_child", "child", &[]);
+        write_installed_pack(&paths, "0030_stale", "stale", &[]);
+
+        let report = remove_package(&paths, "root", false).unwrap();
+        assert_eq!(
+            report.removed,
+            vec!["0010_root", "0020_child", "0030_stale"]
+        );
+        assert!(LockFile::load(&paths.lock()).unwrap().packages.is_empty());
+        assert!(IndexFile::load(&paths.index()).unwrap().packages.is_empty());
+        for install_name in ["0010_root", "0020_child", "0030_stale"] {
+            assert!(!paths.root().join("datapacks").join(install_name).exists());
+        }
+    }
+
+    #[test]
+    fn remove_keeps_shared_dependency() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+        let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+        paths.ensure_state_dirs().unwrap();
+
+        let mut manifest = WorldManifest::default();
+        for dependency in ["root", "other"] {
+            manifest
+                .dependencies
+                .insert(dependency.to_owned(), Dependency::Version("*".to_owned()));
+        }
+        manifest.write_new(&paths.manifest()).unwrap();
+
+        let root = test_package("root", "0010_root");
+        let shared = test_package("shared", "0020_shared");
+        let other = test_package("other", "0030_other");
+        let lock = LockFile {
+            packages: vec![root.clone(), shared.clone(), other.clone()],
+            ..LockFile::default()
+        };
+        lock.write(&paths.lock()).unwrap();
+        let index = IndexFile {
+            packages: vec![
+                index_package(&root, Vec::new()),
+                index_package(&shared, Vec::new()),
+                index_package(&other, Vec::new()),
+            ],
+            ..IndexFile::default()
+        };
+        index.write(&paths.index()).unwrap();
+        write_installed_pack(&paths, "0010_root", "root", &["shared"]);
+        write_installed_pack(&paths, "0020_shared", "shared", &[]);
+        write_installed_pack(&paths, "0030_other", "other", &["shared"]);
+
+        let report = remove_package(&paths, "root", false).unwrap();
+        assert_eq!(report.removed, vec!["0010_root"]);
+        let lock = LockFile::load(&paths.lock()).unwrap();
+        let remaining: BTreeSet<&str> = lock
+            .packages
+            .iter()
+            .map(|package| package.id.as_str())
+            .collect();
+        assert_eq!(remaining, BTreeSet::from(["other", "shared"]));
+        assert!(!paths.root().join("datapacks/0010_root").exists());
+        assert!(paths.root().join("datapacks/0020_shared").is_dir());
+        assert!(paths.root().join("datapacks/0030_other").is_dir());
+    }
+
+    #[test]
+    fn remove_keeps_target_required_by_another_root() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+        let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+        paths.ensure_state_dirs().unwrap();
+
+        let mut manifest = WorldManifest::default();
+        for dependency in ["root", "other"] {
+            manifest
+                .dependencies
+                .insert(dependency.to_owned(), Dependency::Version("*".to_owned()));
+        }
+        manifest.write_new(&paths.manifest()).unwrap();
+
+        let root = test_package("root", "0010_root");
+        let other = test_package("other", "0020_other");
+        let lock = LockFile {
+            packages: vec![root.clone(), other.clone()],
+            ..LockFile::default()
+        };
+        lock.write(&paths.lock()).unwrap();
+        let index = IndexFile {
+            packages: vec![
+                index_package(&root, Vec::new()),
+                index_package(&other, Vec::new()),
+            ],
+            ..IndexFile::default()
+        };
+        index.write(&paths.index()).unwrap();
+        write_installed_pack(&paths, "0010_root", "root", &[]);
+        write_installed_pack(&paths, "0020_other", "other", &["root"]);
+
+        let report = remove_package(&paths, "root", false).unwrap();
+        assert!(report.removed.is_empty());
+        assert!(paths.root().join("datapacks/0010_root").is_dir());
+        assert!(paths.root().join("datapacks/0020_other").is_dir());
+        let manifest = WorldManifest::load(&paths.manifest()).unwrap();
+        assert_eq!(manifest.dependencies.len(), 1);
+        assert!(manifest.dependencies.contains_key("other"));
     }
 
     #[test]

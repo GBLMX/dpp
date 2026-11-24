@@ -258,6 +258,8 @@ priority = 20
 
 `dpp install/update/remove` 直接提交到 `datapacks/`，写 lock/index。下次启动世界时由 MC 加载。
 
+`dpp remove` 先删除直接依赖声明，再从剩余直接依赖出发遍历已安装包的 `dpp.toml`；不可达的 lock/index 包及其 managed 目录会被删除。仍被其他包需要的目标保留；缺少 `dpp.toml` 的包按叶子处理。
+
 - 不发送 reload。
 - `dpp apply` 默认记录“下次启动生效”；`--rcon` 可发送 `/reload`。
 

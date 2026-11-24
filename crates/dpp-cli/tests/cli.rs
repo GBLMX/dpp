@@ -1125,3 +1125,77 @@ fn order_without_lock_reports_empty_expected() {
         .success()
         .stdout(predicate::str::contains("Expected: none"));
 }
+
+#[test]
+fn remove_cleans_orphaned_packages() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+
+    fs::write(
+        world.path().join("dpp.toml"),
+        "schema = 1\n\n[dependencies]\nroot = \"*\"\n",
+    )
+    .unwrap();
+    let hash = "a".repeat(128);
+    fs::write(
+        world.path().join(".dpp/lock.toml"),
+        format!(
+            r#"lock_version = 1
+
+[[package]]
+id = "root"
+source = "modrinth"
+version_number = "1.0.0"
+sha512 = "{hash}"
+install_name = "0010_root"
+load_weight = 10
+
+[[package]]
+id = "child"
+source = "modrinth"
+version_number = "1.0.0"
+sha512 = "{hash}"
+install_name = "0020_child"
+load_weight = 20
+
+[[package]]
+id = "orphan"
+source = "modrinth"
+version_number = "1.0.0"
+sha512 = "{hash}"
+install_name = "0030_orphan"
+load_weight = 30
+"#
+        ),
+    )
+    .unwrap();
+
+    for (install_name, package_id, dependencies) in [
+        ("0010_root", "root", "\n[dependencies]\nchild = \"*\"\n"),
+        ("0020_child", "child", ""),
+        ("0030_orphan", "orphan", ""),
+    ] {
+        let directory = world.path().join("datapacks").join(install_name);
+        fs::create_dir_all(&directory).unwrap();
+        fs::write(
+            directory.join("dpp.toml"),
+            format!("[package]\nid = \"{package_id}\"\nversion = \"1.0.0\"\n{dependencies}"),
+        )
+        .unwrap();
+    }
+
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "remove", "root"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "removed orphaned packages: 0020_child, 0030_orphan",
+        ));
+
+    for install_name in ["0010_root", "0020_child", "0030_orphan"] {
+        assert!(!world.path().join("datapacks").join(install_name).exists());
+    }
+}
