@@ -1,12 +1,13 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Args, Parser, Subcommand};
 use dpp_core::{
     DppError, LevelInfo, LockFile, PackFormat, WorldManifest, WorldPaths, WorldSection,
     adjacent_server_jar, detect_pack_format, find_version_jar,
 };
+use dpp_modrinth::{ModrinthClient, default_user_agent};
 
 #[derive(Debug, Parser)]
 #[command(name = "dpp", version, about = "Minecraft data pack package manager")]
@@ -27,6 +28,8 @@ enum Command {
     Status,
     /// Validate manifest, lock, and dpp state directories.
     Check,
+    /// Search Modrinth datapacks.
+    Search(SearchArgs),
 }
 
 #[derive(Debug, Args)]
@@ -38,6 +41,19 @@ struct InitArgs {
     /// Override the data pack format, e.g. `121` or `121.0`.
     #[arg(long, value_name = "FORMAT")]
     pack_format: Option<String>,
+}
+#[derive(Debug, Args)]
+struct SearchArgs {
+    /// Search query.
+    query: String,
+
+    /// Filter results by Minecraft version.
+    #[arg(long, value_name = "VERSION")]
+    mc_version: Option<String>,
+
+    /// Maximum number of results.
+    #[arg(long, default_value_t = 10, value_name = "N")]
+    limit: u8,
 }
 
 fn main() -> ExitCode {
@@ -52,12 +68,19 @@ fn main() -> ExitCode {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let paths = WorldPaths::discover(cli.world.as_deref())?;
+    let Cli { world, command } = cli;
 
-    match cli.command {
-        Command::Init(args) => init_world(&paths, args),
-        Command::Status => show_status(&paths),
-        Command::Check => check_world(&paths),
+    match command {
+        Command::Search(args) => search(args),
+        command => {
+            let paths = WorldPaths::discover(world.as_deref())?;
+            match command {
+                Command::Init(args) => init_world(&paths, args),
+                Command::Status => show_status(&paths),
+                Command::Check => check_world(&paths),
+                Command::Search(_) => unreachable!(),
+            }
+        }
     }
 }
 
@@ -101,6 +124,34 @@ fn init_world(paths: &WorldPaths, args: InitArgs) -> Result<()> {
     println!("initialized dpp world at {}", paths.root().display());
     println!("  manifest: {}", paths.manifest().display());
     println!("  state:    {}", paths.state_dir().display());
+    Ok(())
+}
+
+fn search(args: SearchArgs) -> Result<()> {
+    if args.limit == 0 || args.limit > 100 {
+        bail!("--limit must be between 1 and 100");
+    }
+
+    let client = ModrinthClient::new(default_user_agent())?;
+    let response = client.search_datapacks(&args.query, args.mc_version.as_deref(), args.limit)?;
+
+    if response.hits.is_empty() {
+        println!("No results.");
+        return Ok(());
+    }
+
+    println!(
+        "{} hits (showing {})",
+        response.total_hits,
+        response.hits.len()
+    );
+    for hit in response.hits {
+        println!("{}\t{}", hit.slug, hit.title);
+        if !hit.description.is_empty() {
+            println!("  {}", hit.description);
+        }
+    }
+
     Ok(())
 }
 

@@ -86,6 +86,13 @@ pub enum DppError {
     #[error("level.dat does not contain Data.Version.Name: {0}")]
     LevelDatVersionMissing(PathBuf),
 
+    #[error("invalid pack.mcmeta JSON in {path}: {source}")]
+    PackMetaJson {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+
     #[error("failed to open Minecraft jar {path}: {source}")]
     JarOpen {
         path: PathBuf,

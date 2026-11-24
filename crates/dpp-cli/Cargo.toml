@@ -13,6 +13,7 @@ path = "src/main.rs"
 anyhow.workspace = true
 clap.workspace = true
 dpp-core = { path = "../dpp-core" }
+dpp-modrinth = { path = "../dpp-modrinth" }
 
 [dev-dependencies]
 assert_cmd.workspace = true

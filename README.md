@@ -41,6 +41,7 @@ Rust workspace 骨架已建立；目前可运行：
 - `dpp init [--mc-version <VERSION>] [--pack-format <FORMAT>]`
 - `dpp status`
 - `dpp check`
+- `dpp search <query> [--mc-version <VERSION>] [--limit <N>]`
 
 `init` 解析 `level.dat` 的 `Data.Version` / `DataVersion`，自动识别 MC 版本与 data pack format；`--mc-version` / `--pack-format` 可覆盖。快照版本若找不到本地 client/server jar，会要求显式指定 format。`status` 显示检测结果；`check` 校验 manifest / world / lock 一致性。
 
@@ -55,21 +56,18 @@ cargo run -p dpp-cli -- --help
 
 布局：
 
-- `crates/dpp-core`：manifest/lock/pack format/path 等核心类型。
+- `crates/dpp-core`：manifest/lock/pack format/pack.mcmeta/path 等核心类型。
+- `crates/dpp-modrinth`：Modrinth API 客户端与响应类型。
 - `crates/dpp-cli`：`dpp` 二进制与 CLI 集成测试。
 
 ## 计划中的命令
 
 ```text
-dpp init
-dpp search <query>
 dpp add <pkg>
 dpp remove <pkg>
 dpp install
 dpp update [pkg...]
 dpp apply [--dry-run] [--rcon]
-dpp status [--json]
-dpp check [--strict]
 dpp snapshot save|restore|list
 dpp order [--print-commands]
 dpp build-pack

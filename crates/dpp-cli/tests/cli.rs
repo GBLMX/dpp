@@ -253,3 +253,14 @@ fn snapshot_without_jar_requires_explicit_format() {
             "could not determine data pack format",
         ));
 }
+
+#[test]
+fn search_rejects_invalid_limit() {
+    dpp()
+        .args(["search", "incendium", "--limit", "0"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "--limit must be between 1 and 100",
+        ));
+}
