@@ -1,0 +1,24 @@
+[package]
+name = "dpp-ops"
+description = "Install and transaction operations for dpp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+dpp-core = { path = "../dpp-core" }
+dpp-modrinth = { path = "../dpp-modrinth" }
+pubgrub.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+zip.workspace = true
