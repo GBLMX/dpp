@@ -249,7 +249,7 @@ priority = 20
 - 两阶段：
   1. 物化候选：API 查版本列表；需要元数据时下载 zip，读 `dpp.toml` + `pack.mcmeta`，缓存到 `~/.cache/dpp/meta/<sha512>.json`。
   2. 离线 pubgrub：`OfflineDependencyProvider` + `DefaultStringReporter`；失败信息必须能说明“没有版本支持 pack format X”。
-- 冲突：`[conflicts]` 和 Modrinth `incompatible` 在求解后做全局校验；不要硬编码成 pubgrub 虚拟包。
+- 冲突：`[conflicts]` 和 Modrinth `incompatible` 先正常求解；发现冲突对后禁用候选并有界重试，已有 lock 版本作为偏好。不要硬编码成 pubgrub 虚拟包。
 - 目标 MC/pack format 变化时，lock 失效；`dpp check` 警告，`dpp update` 重新求解。
 
 ## 7. install / apply 事务

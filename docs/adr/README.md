@@ -7,7 +7,7 @@
 | ADR | 决策 | 状态 | 实现 |
 |---|---|---|---|
 | [0001](0001-instance-root-and-layers.md) | 实例根与状态作用域 | Accepted | 部分：instance root / host.lock / `dpp host` 已实现；config 作用域未实现 |
-| [0002](0002-pack-manifest-and-solving.md) | 数据包清单、包身份与求解策略 | Accepted | 部分：add/install/update 均走 pubgrub；已有 lock 的 add 优先锁版本；声明冲突仍是求解后校验 |
+| [0002](0002-pack-manifest-and-solving.md) | 数据包清单、包身份与求解策略 | Accepted | 部分：add/install/update 均走 pubgrub；已有 lock 的 add 优先锁版本；声明冲突进入有界回溯 |
 | [0003](0003-host-capability-boundary.md) | 宿主能力是预检约束，不是包管理 | Accepted | 部分：离线检测、host.lock、`add/install --server-root` 包级 requires/forbids 已接入；运行时握手未实现 |
 | [0004](0004-adapter-protocol.md) | 宿主适配器是窄通道、低频、能力白名单 | Accepted | 协议类型/校验/CLI 已实现；Paper/KubeJS 传输适配器未实现 |
 | [0005](0005-host-provided-datapacks.md) | 宿主注入数据包不进入 dpp 包图 | Accepted | 部分：host-provided 观测、host.lock、status 冲突警告已实现；Paper 自动采集未实现 |

@@ -66,6 +66,8 @@ Rust workspace 已建立；目前可运行：
 `init` 解析 `level.dat` 的 `Data.Version` / `DataVersion`，自动识别 MC 版本与 data pack format；`--mc-version` / `--pack-format` 可覆盖。快照版本若找不到本地 client/server jar，会要求显式指定 format。`add` 从 Modrinth 选择最新且 `pack.mcmeta` 兼容当前世界格式的 datapack，下载、校验 sha512、写入 `lock.toml` / `index.toml` 并通过 staging + rename 安装。首次安装按 `load_weight` 生成 `0050_<slug>` 目录；更新保持 `install_name` 不变，不自动重排，也不写 `level.dat`。`install` 以 `lock.toml` 为权威重建缺失的数据包；已安装且哈希一致的包会跳过。`remove` 删除直接依赖后，从剩余直接依赖出发遍历已安装包内 `dpp.toml`，删除不可达的 lock/index 条目和 managed 目录；仍被其他包需要的目标保留。`status` 显示检测结果；`check` 校验 manifest / world / lock/index 一致性、逐文件 sha512、managed 目录缺失/额外文件和外来 datapacks 条目；`inspect` 校验本地 zip 根目录的 `pack.mcmeta` 与目标格式。
 
 `add`、lock 缺失时的 `install` 与 `update` 都使用 `pubgrub` 求解包内 `dpp.toml` 依赖；已有 lock 的 `add` 会把锁定版本作为偏好，只有新约束不兼容时才升级共享依赖，并保留已有 `install_name`。`dpp host status/check` 可离线检测宿主并写入 `.dpp/host.lock`；`add/install` 传入 `--server-root` 时会校验包内 `[host] requires/forbids`。jar 管理仍不做，`inspect` 会显示包内清单元数据。
+`[conflicts]` 与 Modrinth `incompatible` 先正常求解；发现冲突对后禁用候选并有界重试，已有 lock 版本作为偏好。超过重试上限或无替代候选时失败，不写包层。
+
 `dpp install --locked` 要求 lock 与 manifest/world 匹配，且不改写 lock；`dpp install --offline` 只使用全局 archive cache，缺归档即失败。两者可组合。`add` / `update` 仍需要 Modrinth 版本元数据，因此不支持 `--offline`，也不支持 `--locked`。
 
 `dpp order` 在疑似关闭的世界里读取 `level.dat` 的 `DataPacks.Enabled`，按 `(load_weight, id, install_name)` 报告期望顺序；`session.lock` 存在时报告 `unknown`，不猜 `/datapack list` 的顺序。`--print-commands` 只打印 `/datapack enable ... before ...` 建议，`--json` 输出结构化报告；不写 `level.dat`，不执行命令。

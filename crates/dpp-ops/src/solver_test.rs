@@ -647,3 +647,125 @@ version = "1.1.0"
     let _ = std::fs::remove_file(archive_cache_path(&old_sha));
     let _ = std::fs::remove_file(archive_cache_path(&new_sha));
 }
+
+#[test]
+fn backtracking_conflict_selects_compatible_old_version() {
+    let a2_zip = pack_zip(
+        r#"
+[package]
+id = "test:a"
+version = "2.0.0"
+
+[conflicts]
+"test:b" = "*"
+"#,
+    );
+    let a1_zip = pack_zip(
+        r#"
+[package]
+id = "test:a"
+version = "1.0.0"
+"#,
+    );
+    let b_zip = pack_zip(
+        r#"
+[package]
+id = "test:b"
+version = "1.0.0"
+"#,
+    );
+    let a2_sha = sha512_bytes(&a2_zip);
+    let a1_sha = sha512_bytes(&a1_zip);
+    let b_sha = sha512_bytes(&b_zip);
+    for sha in [&a2_sha, &a1_sha, &b_sha] {
+        let _ = std::fs::remove_file(archive_cache_path(sha));
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let base_url = format!("http://{address}");
+    let a_versions = format!(
+        "[{},{}]",
+        version_json(
+            "a-project",
+            "a-v2",
+            "2.0.0",
+            &format!("{base_url}/a2.zip"),
+            &a2_sha,
+            a2_zip.len(),
+        )
+        .trim_start_matches('[')
+        .trim_end_matches(']'),
+        version_json(
+            "a-project",
+            "a-v1",
+            "1.0.0",
+            &format!("{base_url}/a1.zip"),
+            &a1_sha,
+            a1_zip.len(),
+        )
+        .trim_start_matches('[')
+        .trim_end_matches(']'),
+    );
+    let b_versions = version_json(
+        "b-project",
+        "b-v1",
+        "1.0.0",
+        &format!("{base_url}/b.zip"),
+        &b_sha,
+        b_zip.len(),
+    );
+    let server = thread::spawn(move || {
+        for _ in 0..7 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let read = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..read]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or_default();
+            let (status, content_type, body): (&str, &str, Vec<u8>) =
+                if path.starts_with("/v2/project/a-project/version") {
+                    ("200 OK", "application/json", a_versions.as_bytes().to_vec())
+                } else if path.starts_with("/v2/project/b-project/version") {
+                    ("200 OK", "application/json", b_versions.as_bytes().to_vec())
+                } else if path == "/a2.zip" {
+                    ("200 OK", "application/zip", a2_zip.clone())
+                } else if path == "/a1.zip" {
+                    ("200 OK", "application/zip", a1_zip.clone())
+                } else if path == "/b.zip" {
+                    ("200 OK", "application/zip", b_zip.clone())
+                } else {
+                    ("404 Not Found", "text/plain", b"not found".to_vec())
+                };
+            let header = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(header.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+        }
+    });
+
+    let client =
+        ModrinthClient::with_base_url(format!("{base_url}/v2"), "dpp-solver-test").unwrap();
+    let mut manifest = WorldManifest::default();
+    for project in ["a-project", "b-project"] {
+        manifest
+            .dependencies
+            .insert(project.to_owned(), Dependency::Version("*".to_owned()));
+    }
+    let solved = solve_world(&manifest, "26.3", PackFormat::new(121, 0), &client).unwrap();
+    server.join().unwrap();
+
+    let a = solved
+        .iter()
+        .find(|package| package.source == "a-project")
+        .unwrap();
+    assert_eq!(a.version.id, "a-v1");
+    assert_eq!(a.version.version_number, "1.0.0");
+    let _ = std::fs::remove_file(archive_cache_path(&a2_sha));
+    let _ = std::fs::remove_file(archive_cache_path(&a1_sha));
+    let _ = std::fs::remove_file(archive_cache_path(&b_sha));
+}

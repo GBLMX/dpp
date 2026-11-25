@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
@@ -40,6 +40,18 @@ pub(crate) struct SolvePreferences {
     version_ids: BTreeMap<String, String>,
 }
 
+impl SolvePreferences {
+    fn is_preferred(&self, package: &SolvedPackage) -> bool {
+        self.version_ids
+            .get(&package.source)
+            .is_some_and(|version_id| version_id == &package.version.id)
+            || self.versions.get(&package.source).is_some_and(|version| {
+                Version::parse(&package.version.version_number)
+                    .is_ok_and(|candidate| candidate == *version)
+            })
+    }
+}
+
 pub(crate) fn preferences_from_lock(lock: &LockFile) -> SolvePreferences {
     let mut preferences = SolvePreferences::default();
     for package in &lock.packages {
@@ -74,6 +86,7 @@ struct Provider<'a> {
     target: PackFormat,
     direct: &'a BTreeMap<String, Dependency>,
     preferred: &'a SolvePreferences,
+    excluded: &'a BTreeSet<(String, String)>,
     candidates: RefCell<BTreeMap<String, Vec<Candidate>>>,
     resolved: RefCell<BTreeMap<(String, Version), ResolvedCandidate>>,
 }
@@ -95,11 +108,85 @@ pub(crate) fn solve_world_with_preferences(
     client: &ModrinthClient,
     preferred: &SolvePreferences,
 ) -> Result<Vec<SolvedPackage>> {
+    let mut attempts = 0;
+    solve_with_exclusions(
+        manifest,
+        mc_version,
+        target,
+        client,
+        preferred,
+        &BTreeSet::new(),
+        &mut attempts,
+    )
+}
+
+const MAX_CONFLICT_RETRIES: usize = 16;
+
+fn solve_with_exclusions(
+    manifest: &WorldManifest,
+    mc_version: &str,
+    target: PackFormat,
+    client: &ModrinthClient,
+    preferred: &SolvePreferences,
+    excluded: &BTreeSet<(String, String)>,
+    attempts: &mut usize,
+) -> Result<Vec<SolvedPackage>> {
+    *attempts += 1;
+    if *attempts > MAX_CONFLICT_RETRIES {
+        bail!("conflict resolution exceeded {MAX_CONFLICT_RETRIES} attempts");
+    }
+    let selected = solve_once(manifest, mc_version, target, client, preferred, excluded)?;
+    let Some((left, right)) = find_conflict(&selected) else {
+        return Ok(selected);
+    };
+
+    let left_key = (left.source.clone(), left.version.id.clone());
+    let right_key = (right.source.clone(), right.version.id.clone());
+    let left_preferred = preferred.is_preferred(left);
+    let right_preferred = preferred.is_preferred(right);
+    let choices = if left_preferred && !right_preferred {
+        [right_key, left_key]
+    } else {
+        [left_key, right_key]
+    };
+
+    let mut last_error = None;
+    for key in choices {
+        if excluded.contains(&key) {
+            continue;
+        }
+        let mut next = excluded.clone();
+        next.insert(key);
+        match solve_with_exclusions(
+            manifest, mc_version, target, client, preferred, &next, attempts,
+        ) {
+            Ok(selected) => return Ok(selected),
+            Err(error) => last_error = Some(error),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| {
+        anyhow!(
+            "unresolved conflict between {} and {}; no alternative candidate",
+            left.source,
+            right.source
+        )
+    }))
+}
+
+fn solve_once(
+    manifest: &WorldManifest,
+    mc_version: &str,
+    target: PackFormat,
+    client: &ModrinthClient,
+    preferred: &SolvePreferences,
+    excluded: &BTreeSet<(String, String)>,
+) -> Result<Vec<SolvedPackage>> {
     let provider = Provider {
         client,
         mc_version,
         target,
         preferred,
+        excluded,
         direct: &manifest.dependencies,
         candidates: RefCell::new(BTreeMap::new()),
         resolved: RefCell::new(BTreeMap::new()),
@@ -125,38 +212,41 @@ pub(crate) fn solve_world_with_preferences(
             manifest: resolved.manifest,
         });
     }
+    selected.sort_by(|left, right| left.source.cmp(&right.source));
+    Ok(selected)
+}
 
-    let selected_ids: BTreeMap<&str, &str> = selected
-        .iter()
-        .flat_map(|package| {
-            let canonical = package
-                .manifest
-                .as_ref()
-                .map(|manifest| manifest.package.id.as_str());
-            std::iter::once((package.source.as_str(), package.source.as_str())).chain(
-                canonical
-                    .into_iter()
-                    .map(|id| (id, package.source.as_str())),
-            )
-        })
-        .collect();
-    for package in &selected {
-        let Some(manifest) = &package.manifest else {
-            continue;
-        };
-        for target in manifest.conflicts.keys() {
-            if let Some(owner) = selected_ids.get(target.as_str()) {
-                bail!(
-                    "conflict: {} {} conflicts with selected package {owner} ({target})",
-                    manifest.package.id,
-                    manifest.package.version
-                );
-            }
+fn find_conflict(selected: &[SolvedPackage]) -> Option<(&SolvedPackage, &SolvedPackage)> {
+    let mut aliases = BTreeMap::new();
+    for package in selected {
+        aliases.insert(package.source.as_str(), package);
+        aliases.insert(package.version.project_id.as_str(), package);
+        if let Some(manifest) = &package.manifest {
+            aliases.insert(manifest.package.id.as_str(), package);
         }
     }
 
-    selected.sort_by(|left, right| left.source.cmp(&right.source));
-    Ok(selected)
+    for package in selected {
+        let mut targets = BTreeSet::new();
+        if let Some(manifest) = &package.manifest {
+            targets.extend(manifest.conflicts.keys().map(String::as_str));
+        }
+        for dependency in &package.version.dependencies {
+            if dependency.dependency_type == "incompatible"
+                && let Some(project_id) = dependency.project_id.as_deref()
+            {
+                targets.insert(project_id);
+            }
+        }
+        for target in targets {
+            if let Some(other) = aliases.get(target)
+                && other.source != package.source
+            {
+                return Some((package, other));
+            }
+        }
+    }
+    None
 }
 
 impl<'a> Provider<'a> {
@@ -338,7 +428,11 @@ impl DependencyProvider for Provider<'_> {
         let candidates = self.load_candidates(package)?;
         if let Some(preferred) = self.preferred.versions.get(package)
             && let Some(candidate) = candidates.iter().find(|candidate| {
-                &candidate.version == preferred && range.contains(&candidate.version)
+                &candidate.version == preferred
+                    && range.contains(&candidate.version)
+                    && !self
+                        .excluded
+                        .contains(&(package.clone(), candidate.project.id.clone()))
             })
             && self.compatible_candidate(package, candidate)?.is_some()
         {
@@ -346,14 +440,22 @@ impl DependencyProvider for Provider<'_> {
         }
         if let Some(preferred) = self.preferred.version_ids.get(package)
             && let Some(candidate) = candidates.iter().find(|candidate| {
-                candidate.project.id == *preferred && range.contains(&candidate.version)
+                candidate.project.id == *preferred
+                    && range.contains(&candidate.version)
+                    && !self
+                        .excluded
+                        .contains(&(package.clone(), candidate.project.id.clone()))
             })
             && self.compatible_candidate(package, candidate)?.is_some()
         {
             return Ok(Some(candidate.version.clone()));
         }
         for candidate in candidates {
-            if !range.contains(&candidate.version) {
+            if !range.contains(&candidate.version)
+                || self
+                    .excluded
+                    .contains(&(package.clone(), candidate.project.id.clone()))
+            {
                 continue;
             }
             if self.compatible_candidate(package, &candidate)?.is_some() {
