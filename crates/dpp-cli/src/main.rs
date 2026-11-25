@@ -1183,7 +1183,8 @@ fn check_world(paths: &WorldPaths) -> Result<()> {
         }
     }
 
-    if let Some(lock) = LockFile::load_optional(&paths.lock())? {
+    let lock = LockFile::load_optional(&paths.lock())?;
+    if let Some(lock) = &lock {
         lock.validate()?;
 
         if let (Some(lock_format), Some(manifest_format)) =
@@ -1198,8 +1199,22 @@ fn check_world(paths: &WorldPaths) -> Result<()> {
             }
         }
     }
+    let index = IndexFile::load_optional(&paths.index())?;
+    let integrity = dpp_ops::check_world_integrity(paths, lock.as_ref(), index.as_ref())?;
+    for warning in &integrity.warnings {
+        eprintln!("warning: {warning}");
+    }
+    if !integrity.errors.is_empty() {
+        for error in &integrity.errors {
+            eprintln!("error: {error}");
+        }
+        bail!(
+            "integrity check failed with {} error(s)",
+            integrity.errors.len()
+        );
+    }
 
-    if paths.lock().is_file() {
+    if lock.is_some() {
         let report = dpp_ops::order_world(paths)?;
         if report.status == "drift" {
             eprintln!("warning: load order differs from lock; run `dpp order --print-commands`");

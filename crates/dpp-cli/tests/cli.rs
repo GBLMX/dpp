@@ -1199,3 +1199,66 @@ load_weight = 30
         assert!(!world.path().join("datapacks").join(install_name).exists());
     }
 }
+
+#[test]
+fn check_detects_modified_managed_file() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+
+    let content = b"original";
+    let file_hash = dpp_core::sha512_bytes(content);
+    let archive_hash = "a".repeat(128);
+    fs::write(
+        world.path().join(".dpp/lock.toml"),
+        format!(
+            r#"lock_version = 1
+
+[[package]]
+id = "demo"
+source = "modrinth"
+version_number = "1.0.0"
+sha512 = "{archive_hash}"
+install_name = "demo"
+load_weight = 50
+"#
+        ),
+    )
+    .unwrap();
+    fs::write(
+        world.path().join(".dpp/index.toml"),
+        format!(
+            r#"index_version = 1
+
+[[package]]
+id = "demo"
+source = "modrinth"
+sha512 = "{archive_hash}"
+install_name = "demo"
+
+[[package.file]]
+path = "pack.mcmeta"
+sha512 = "{file_hash}"
+"#
+        ),
+    )
+    .unwrap();
+    let package = world.path().join("datapacks/demo");
+    fs::create_dir_all(&package).unwrap();
+    fs::write(package.join("pack.mcmeta"), content).unwrap();
+
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "check"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("ok:"));
+
+    fs::write(package.join("pack.mcmeta"), b"modified").unwrap();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "check"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("sha512 mismatch"));
+}

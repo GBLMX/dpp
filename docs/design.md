@@ -310,12 +310,14 @@ priority = 20
 | `dpp update [--stage]` | 重新求解并提交；`--stage` 只写 plan | 是 |
 | `dpp apply [--dry-run] [--manual] [--rcon] [--log PATH] [--abort] [--rollback]` | 提交 staged plan；激活并验证；可 abort/rollback | 是 |
 | `dpp status` | 报告五态；`--json` | 是 |
-| `dpp check` | 哈希、格式、feature flag、外来包、顺序偏差、JSON 语法 | 是 |
+| `dpp check` | 格式、lock/index 一致性、逐文件 sha512、managed 目录缺失/额外文件、外来 datapacks、顺序偏差 | 是 |
 | `dpp snapshot save/restore/list` | 包状态快照，不是世界备份 | 是 |
 | `dpp order [--json] [--print-commands]` | 只读报告顺序并打印原生命令 | 是 |
 | `dpp build-pack` | 校验清单/`pack.mcmeta`，确定性打包，输出 sha512/index 条目 | 是 |
 | `dpp source list/add/remove` | 源管理 | 是 |
 | `dpp cache clean` | 清理未被引用的归档 | 是 |
+
+`dpp check` 只读：managed 包目录/文件缺失、sha512 漂移、额外文件、lock/index 不一致为错误；`datapacks/` 下未登记条目为警告。检查失败不自动修复。
 
 `dpp order --apply`、`dpp order --write-level-dat`、`dpp order --rcon` 不属于 MVP；见 [load-order.md](load-order.md)。
 

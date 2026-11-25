@@ -12,6 +12,7 @@ use dpp_modrinth::{Hashes, ModrinthClient, ProjectVersion, VersionFile};
 use tempfile::TempDir;
 mod apply;
 mod config;
+mod integrity;
 mod journal;
 mod order;
 mod rcon;
@@ -20,6 +21,7 @@ pub use apply::{ApplyOptions, ApplyReport, StagedPlanStatus, apply_world, staged
 pub use config::{
     ConfigApplyReport, ConfigPatch, PatchFormat, allow_target, apply_patch, target_lock_summary,
 };
+pub use integrity::{IntegrityReport, check_world_integrity};
 pub use journal::{JournalStatus, recover as recover_world, status as journal_status};
 pub use order::{OrderEntry, OrderReport, order_world};
 
