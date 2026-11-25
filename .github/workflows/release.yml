@@ -63,6 +63,7 @@ jobs:
           else
             shasum -a 256 "dist/${name}.tar.gz" > "dist/${name}.tar.gz.sha256"
           fi
+          rm -rf "dist/${name}"
 
       - name: Package (Windows)
         if: runner.os == 'Windows'
@@ -78,6 +79,7 @@ jobs:
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
           "$hash  dist/$name.zip" | Set-Content "dist/$name.zip.sha256"
+          Remove-Item -Recurse -Force "dist/$name"
 
       - uses: actions/upload-artifact@v7
         with:
