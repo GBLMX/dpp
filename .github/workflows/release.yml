@@ -22,7 +22,7 @@ jobs:
             target: x86_64-unknown-linux-musl
           - os: macos-15-intel
             target: x86_64-apple-darwin
-          - os: macos-14
+          - os: macos-15
             target: aarch64-apple-darwin
           - os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -43,9 +43,7 @@ jobs:
           key: ${{ matrix.target }}
 
       - name: Build
-        env:
-          TARGET: ${{ matrix.target }}
-        run: cargo build --release --locked -p dpp-cli --bin dpp --target "$TARGET"
+        run: cargo build --release --locked -p dpp-cli --bin dpp --target ${{ matrix.target }}
 
       - name: Package (Unix)
         if: runner.os != 'Windows'
