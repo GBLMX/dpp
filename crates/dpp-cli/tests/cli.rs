@@ -1262,3 +1262,20 @@ sha512 = "{file_hash}"
         .failure()
         .stderr(predicate::str::contains("sha512 mismatch"));
 }
+
+#[test]
+fn install_locked_and_offline_require_lockfile() {
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+
+    for flag in ["--locked", "--offline"] {
+        dpp()
+            .args(["--world", world.path().to_str().unwrap(), "install", flag])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("requires an existing lock.toml"));
+    }
+}

@@ -306,7 +306,7 @@ priority = 20
 | `dpp search <query>` | 搜索 Modrinth（`categories:datapack`） | 是 |
 | `dpp add <pkg>` | 添加直接依赖、求解、锁定、安装 | 是 |
 | `dpp remove <pkg> [--stage]` | 删除直接依赖并清理孤儿；`--stage` 只写 plan | 是 |
-| `dpp install [--stage]` | 按 lock 同步包层；`--stage` 只写 plan | 是 |
+| `dpp install [--stage] [--locked] [--offline]` | 按 lock 同步包层；`--stage` 只写 plan；严格模式要求 lock | 是 |
 | `dpp update [--stage]` | 重新求解并提交；`--stage` 只写 plan | 是 |
 | `dpp apply [--dry-run] [--manual] [--rcon] [--log PATH] [--abort] [--rollback]` | 提交 staged plan；激活并验证；可 abort/rollback | 是 |
 | `dpp status` | 报告五态；`--json` | 是 |

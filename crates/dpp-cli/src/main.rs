@@ -158,6 +158,14 @@ struct InstallArgs {
     /// Write a staged plan instead of committing datapacks.
     #[arg(long)]
     stage: bool,
+
+    /// Fail if lock.toml is missing or does not match the manifest.
+    #[arg(long)]
+    locked: bool,
+
+    /// Use only cached archives; never download.
+    #[arg(long)]
+    offline: bool,
 }
 
 #[derive(Debug, Args)]
@@ -343,7 +351,7 @@ fn run(cli: Cli) -> Result<()> {
                 Command::Check => check_world(&paths),
                 Command::Add(args) => add_pack(&paths, args, server_root.as_deref()),
                 Command::Remove(args) => remove_pack(&paths, args),
-                Command::Install(args) => install_lock(&paths, server_root.as_deref(), args.stage),
+                Command::Install(args) => install_lock(&paths, server_root.as_deref(), args),
                 Command::Update(args) => update_lock(&paths, server_root.as_deref(), args.stage),
                 Command::Apply(args) => apply_command(&paths, args, server_root.as_deref()),
                 Command::Snapshot(args) => snapshot_command(&paths, args),
@@ -715,13 +723,23 @@ fn remove_pack(paths: &WorldPaths, args: RemoveArgs) -> Result<()> {
 fn install_lock(
     paths: &WorldPaths,
     server_root: Option<&std::path::Path>,
-    stage: bool,
+    args: InstallArgs,
 ) -> Result<()> {
     let (mc_version, target) = target_for_world(paths)?;
     let host = load_host_profile(server_root)?;
     let client = ModrinthClient::new(default_user_agent())?;
-    let report: InstallReport =
-        dpp_ops::install_world(paths, &mc_version, target, &client, host.as_ref(), stage)?;
+    let report: InstallReport = dpp_ops::install_world_with_options(
+        paths,
+        &mc_version,
+        target,
+        &client,
+        host.as_ref(),
+        dpp_ops::InstallOptions {
+            stage: args.stage,
+            locked: args.locked,
+            offline: args.offline,
+        },
+    )?;
     print_install_report(&report);
     Ok(())
 }

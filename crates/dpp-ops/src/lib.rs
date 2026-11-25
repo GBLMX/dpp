@@ -50,6 +50,13 @@ pub struct InstallReport {
     pub staged_plan: Option<PathBuf>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct InstallOptions {
+    pub stage: bool,
+    pub locked: bool,
+    pub offline: bool,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct UpdateReport {
     pub installed: Vec<InstalledPackage>,
@@ -406,6 +413,27 @@ pub fn install_world(
     host: Option<&HostProfile>,
     stage: bool,
 ) -> Result<InstallReport> {
+    install_world_with_options(
+        world,
+        mc_version,
+        target,
+        client,
+        host,
+        InstallOptions {
+            stage,
+            ..InstallOptions::default()
+        },
+    )
+}
+
+pub fn install_world_with_options(
+    world: &WorldPaths,
+    mc_version: &str,
+    target: PackFormat,
+    client: &ModrinthClient,
+    host: Option<&HostProfile>,
+    options: InstallOptions,
+) -> Result<InstallReport> {
     world.require_level_dat()?;
     world.require_state_dirs()?;
 
@@ -413,6 +441,12 @@ pub fn install_world(
     verify_manifest_target(&manifest, target, mc_version)?;
     let index = IndexFile::load_optional(&world.index())?.unwrap_or_default();
     let existing_lock = LockFile::load_optional(&world.lock())?;
+    if options.locked && existing_lock.is_none() {
+        bail!("--locked requires an existing lock.toml");
+    }
+    if options.offline && existing_lock.is_none() {
+        bail!("--offline requires an existing lock.toml; metadata is not cached");
+    }
     let staging = create_staging(world)?;
     let mut prepared = Vec::new();
     let mut skipped = Vec::new();
@@ -432,7 +466,8 @@ pub fn install_world(
             }
 
             collect_replaced_install_name(&index, package, &mut removed);
-            let prepared_package = prepare_lock(package, staging.path(), target, client)?;
+            let prepared_package =
+                prepare_lock(package, staging.path(), target, client, options.offline)?;
             ensure_host_preflight(prepared_package.manifest.as_ref(), host)?;
             new_index
                 .packages
@@ -440,22 +475,24 @@ pub fn install_world(
             new_index.packages.push(prepared_package.index.clone());
             prepared.push(prepared_package);
         }
-        for prepared_package in &prepared {
-            if let Some(package) = lock.packages.iter_mut().find(|package| {
-                package.id == prepared_package.lock.id
-                    && package.source == prepared_package.lock.source
-            }) {
-                if package.package_id.is_none() {
-                    package.package_id = prepared_package.lock.package_id.clone();
+        if !options.locked {
+            for prepared_package in &prepared {
+                if let Some(package) = lock.packages.iter_mut().find(|package| {
+                    package.id == prepared_package.lock.id
+                        && package.source == prepared_package.lock.source
+                }) {
+                    if package.package_id.is_none() {
+                        package.package_id = prepared_package.lock.package_id.clone();
+                    }
                 }
             }
-        }
 
-        if lock.metadata.pack_format.is_none() {
-            lock.metadata.pack_format = Some(target);
-        }
-        if lock.metadata.mc_version.is_none() {
-            lock.metadata.mc_version = Some(mc_version.to_owned());
+            if lock.metadata.pack_format.is_none() {
+                lock.metadata.pack_format = Some(target);
+            }
+            if lock.metadata.mc_version.is_none() {
+                lock.metadata.mc_version = Some(mc_version.to_owned());
+            }
         }
         sort_index(&mut new_index);
         (lock, new_index)
@@ -492,7 +529,7 @@ pub fn install_world(
         (lock, new_index)
     };
 
-    if stage {
+    if options.stage {
         let plan_dir = staging.keep();
         let plan = crate::apply::write_staged_plan(
             &plan_dir, None, &new_lock, &new_index, &prepared, &removed,
@@ -639,6 +676,14 @@ fn selected_matches_lock(package: &SolvedPackage, locked: &LockPackage) -> bool 
 }
 
 fn ensure_cached(client: &ModrinthClient, file: &VersionFile) -> Result<PathBuf> {
+    ensure_cached_with_mode(client, file, false)
+}
+
+fn ensure_cached_with_mode(
+    client: &ModrinthClient,
+    file: &VersionFile,
+    offline: bool,
+) -> Result<PathBuf> {
     let sha512 = validate_sha512(&file.hashes.sha512)?;
     let path = archive_cache_path(&sha512);
     if path.is_file() {
@@ -646,6 +691,12 @@ fn ensure_cached(client: &ModrinthClient, file: &VersionFile) -> Result<PathBuf>
             return Ok(path);
         }
         let _ = fs::remove_file(&path);
+    }
+    if offline {
+        bail!(
+            "offline mode: archive sha512:{sha512} is not cached ({})",
+            file.filename
+        );
     }
 
     if let Some(parent) = path.parent() {
@@ -746,6 +797,7 @@ fn prepare_lock(
     staging: &Path,
     target: PackFormat,
     client: &ModrinthClient,
+    offline: bool,
 ) -> Result<PreparedPackage> {
     validate_install_name(&lock.install_name)?;
     let sha512 = validate_sha512(&lock.sha512)?;
@@ -767,7 +819,7 @@ fn prepare_lock(
         size: lock.size.unwrap_or(0),
         file_type: None,
     };
-    let archive = ensure_cached(client, &file)?;
+    let archive = ensure_cached_with_mode(client, &file, offline)?;
     inspect_zip(&archive, target)?;
     let manifest = PackManifest::load_from_zip(&archive)?;
     if lock.package_id.is_some() && manifest.is_none() {
@@ -1307,6 +1359,141 @@ mod tests {
     fn sha512_validation_is_strict() {
         assert!(validate_sha512("00").is_err());
         assert_eq!(validate_sha512(&"a".repeat(128)).unwrap(), "a".repeat(128));
+    }
+
+    #[test]
+    fn install_offline_uses_cached_archive() {
+        use std::io::{Cursor, Write};
+
+        use dpp_core::sha512_bytes;
+        use zip::CompressionMethod;
+        use zip::ZipWriter;
+        use zip::write::SimpleFileOptions;
+
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+        let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+        paths.ensure_state_dirs().unwrap();
+        WorldManifest::default()
+            .write_new(&paths.manifest())
+            .unwrap();
+
+        let mut writer = ZipWriter::new(Cursor::new(Vec::new()));
+        writer
+            .start_file(
+                "pack.mcmeta",
+                SimpleFileOptions::default().compression_method(CompressionMethod::Deflated),
+            )
+            .unwrap();
+        writer
+            .write_all(
+                br#"{"pack":{"description":"offline","min_format":[121,0],"max_format":[121,0]}}"#,
+            )
+            .unwrap();
+        let archive = writer.finish().unwrap().into_inner();
+        let sha = sha512_bytes(&archive);
+        let cache = archive_cache_path(&sha);
+        std::fs::create_dir_all(cache.parent().unwrap()).unwrap();
+        std::fs::write(&cache, &archive).unwrap();
+
+        let mut package = test_package("demo", "0050_demo");
+        package.package_id = None;
+        package.sha512 = sha.clone();
+        package.size = Some(archive.len() as u64);
+        package.url = Some("http://127.0.0.1:9/pack.zip".to_owned());
+        LockFile {
+            packages: vec![package],
+            ..LockFile::default()
+        }
+        .write(&paths.lock())
+        .unwrap();
+
+        let client =
+            ModrinthClient::with_base_url("http://127.0.0.1:9/v2", "dpp-offline-test").unwrap();
+        let report = install_world_with_options(
+            &paths,
+            "26.3",
+            PackFormat::new(121, 0),
+            &client,
+            None,
+            InstallOptions {
+                offline: true,
+                ..InstallOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(report.installed.len(), 1);
+        assert!(
+            paths
+                .root()
+                .join("datapacks/0050_demo/pack.mcmeta")
+                .is_file()
+        );
+        let _ = std::fs::remove_file(cache);
+    }
+
+    #[test]
+    fn install_offline_rejects_missing_archive() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+        let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+        paths.ensure_state_dirs().unwrap();
+        WorldManifest::default()
+            .write_new(&paths.manifest())
+            .unwrap();
+
+        let mut package = test_package("missing", "0050_missing");
+        package.package_id = None;
+        package.sha512 = "b".repeat(128);
+        package.url = Some("http://127.0.0.1:9/missing.zip".to_owned());
+        LockFile {
+            packages: vec![package],
+            ..LockFile::default()
+        }
+        .write(&paths.lock())
+        .unwrap();
+        let client =
+            ModrinthClient::with_base_url("http://127.0.0.1:9/v2", "dpp-offline-test").unwrap();
+        let error = install_world_with_options(
+            &paths,
+            "26.3",
+            PackFormat::new(121, 0),
+            &client,
+            None,
+            InstallOptions {
+                offline: true,
+                ..InstallOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("offline mode"));
+        assert!(!paths.root().join("datapacks/0050_missing").exists());
+    }
+
+    #[test]
+    fn install_locked_requires_lockfile() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+        let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+        paths.ensure_state_dirs().unwrap();
+        WorldManifest::default()
+            .write_new(&paths.manifest())
+            .unwrap();
+        let client =
+            ModrinthClient::with_base_url("http://127.0.0.1:9/v2", "dpp-offline-test").unwrap();
+        let error = install_world_with_options(
+            &paths,
+            "26.3",
+            PackFormat::new(121, 0),
+            &client,
+            None,
+            InstallOptions {
+                locked: true,
+                ..InstallOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("--locked requires"));
     }
 
     #[test]
