@@ -86,6 +86,23 @@ Rust workspace 已建立；目前可运行：
 
 `dpp adapter validate/event` 校验 `dpp.events/1` 适配器清单和事件 JSON：有界 payload、声明事件白名单、单调事件 ID；真正的 Paper/KubeJS 传输适配器仍需单独实现。
 
+## 安装
+
+从 [Releases](https://github.com/GBLMX/dpp/releases) 下载对应平台的压缩包（`vX.Y.Z` 对应版本号）：
+
+| 平台 | 资产 |
+|---|---|
+| Linux x86_64（静态 musl） | `dpp-X.Y.Z-x86_64-unknown-linux-musl.tar.gz` |
+| macOS Intel | `dpp-X.Y.Z-x86_64-apple-darwin.tar.gz` |
+| macOS Apple Silicon | `dpp-X.Y.Z-aarch64-apple-darwin.tar.gz` |
+| Windows x86_64 | `dpp-X.Y.Z-x86_64-pc-windows-msvc.zip` |
+
+解压后把 `dpp`（Windows 为 `dpp.exe`）加入 `PATH`。Release 附带同名 `.sha256` 文件用于校验。也可从源码安装：
+
+```sh
+cargo install --git https://github.com/GBLMX/dpp --locked --package dpp-cli --bin dpp
+```
+
 ## 开发
 
 ```sh
