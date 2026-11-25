@@ -8,7 +8,7 @@ use dpp_core::{
     AdapterEvent, AdapterManifest, AdapterSession, AppliedFile, BuildPackOptions, DppError,
     HostLockFile, HostProfile, HostProvidedFile, HostProvidedPack, IndexFile, InstancePaths,
     LevelInfo, LockFile, PackFormat, PackManifest, WorldManifest, WorldPaths, WorldSection,
-    adjacent_server_jar, build_pack, detect_host, detect_pack_format, find_version_jar,
+    adjacent_server_jar, build_pack, cache_dir, detect_host, detect_pack_format, find_version_jar,
     inspect_zip, sha512_file,
 };
 use dpp_modrinth::{ModrinthClient, default_user_agent};
@@ -173,11 +173,20 @@ struct UpdateArgs {
     /// Write a staged plan instead of committing datapacks.
     #[arg(long)]
     stage: bool,
+
+    /// Use cached metadata and archives; never access the network.
+    #[arg(long)]
+    offline: bool,
 }
+
 #[derive(Debug, Args)]
 struct AddArgs {
     /// Modrinth project slug or ID.
     project: String,
+
+    /// Use cached metadata and archives; never access the network.
+    #[arg(long)]
+    offline: bool,
 }
 
 #[derive(Debug, Args)]
@@ -352,7 +361,9 @@ fn run(cli: Cli) -> Result<()> {
                 Command::Add(args) => add_pack(&paths, args, server_root.as_deref()),
                 Command::Remove(args) => remove_pack(&paths, args),
                 Command::Install(args) => install_lock(&paths, server_root.as_deref(), args),
-                Command::Update(args) => update_lock(&paths, server_root.as_deref(), args.stage),
+                Command::Update(args) => {
+                    update_lock(&paths, server_root.as_deref(), args.stage, args.offline)
+                }
                 Command::Apply(args) => apply_command(&paths, args, server_root.as_deref()),
                 Command::Snapshot(args) => snapshot_command(&paths, args),
                 Command::Host(_)
@@ -666,6 +677,16 @@ fn config_command(server_root: Option<&std::path::Path>, args: ConfigArgs) -> Re
     Ok(())
 }
 
+fn modrinth_client(offline: bool) -> Result<ModrinthClient> {
+    let client = ModrinthClient::new(default_user_agent())?
+        .with_metadata_cache(cache_dir().join("metadata"));
+    Ok(if offline {
+        client.with_offline(true)
+    } else {
+        client
+    })
+}
+
 fn add_pack(
     paths: &WorldPaths,
     args: AddArgs,
@@ -673,7 +694,7 @@ fn add_pack(
 ) -> Result<()> {
     let (mc_version, target) = target_for_world(paths)?;
     let host = load_host_profile(server_root)?;
-    let client = ModrinthClient::new(default_user_agent())?;
+    let client = modrinth_client(args.offline)?;
     let report: AddReport = dpp_ops::add_package(
         paths,
         &args.project,
@@ -748,10 +769,11 @@ fn update_lock(
     paths: &WorldPaths,
     server_root: Option<&std::path::Path>,
     stage: bool,
+    offline: bool,
 ) -> Result<()> {
     let (mc_version, target) = target_for_world(paths)?;
     let host = load_host_profile(server_root)?;
-    let client = ModrinthClient::new(default_user_agent())?;
+    let client = modrinth_client(offline)?;
     let report = dpp_ops::update_world(paths, &mc_version, target, &client, host.as_ref(), stage)?;
     if let Some(plan) = &report.staged_plan {
         println!("staged plan: {}", plan.display());

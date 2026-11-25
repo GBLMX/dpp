@@ -41,10 +41,10 @@ Rust workspace 已建立；目前可运行：
 - `dpp --version`
 - `dpp new <name> [--dir <PATH>] [--mc-version <VERSION>] [--pack-format <FORMAT>]`
 - `dpp init [--mc-version <VERSION>] [--pack-format <FORMAT>]`
-- `dpp add <modrinth-project>`
+- `dpp add <modrinth-project> [--offline]`
 - `dpp remove <modrinth-project> [--stage]`
 - `dpp install [--stage] [--locked] [--offline]`
-- `dpp update [--stage]`
+- `dpp update [--stage] [--offline]`
 - `dpp apply [--dry-run] [--manual] [--rcon] [--log <PATH>] [--abort] [--rollback]`
 - `dpp snapshot save <name>`
 - `dpp snapshot restore <name>`
@@ -68,7 +68,7 @@ Rust workspace 已建立；目前可运行：
 `add`、lock 缺失时的 `install` 与 `update` 都使用 `pubgrub` 求解包内 `dpp.toml` 依赖；已有 lock 的 `add` 会把锁定版本作为偏好，只有新约束不兼容时才升级共享依赖，并保留已有 `install_name`。`dpp host status/check` 可离线检测宿主并写入 `.dpp/host.lock`；`add/install` 传入 `--server-root` 时会校验包内 `[host] requires/forbids`。jar 管理仍不做，`inspect` 会显示包内清单元数据。
 `[conflicts]` 与 Modrinth `incompatible` 先正常求解；发现冲突对后禁用候选并有界重试，已有 lock 版本作为偏好。超过重试上限或无替代候选时失败，不写包层。
 
-`dpp install --locked` 要求 lock 与 manifest/world 匹配，且不改写 lock；`dpp install --offline` 只使用全局 archive cache，缺归档即失败。两者可组合。`add` / `update` 仍需要 Modrinth 版本元数据，因此不支持 `--offline`，也不支持 `--locked`。
+`dpp install --locked` 要求 lock 与 manifest/world 匹配，且不改写 lock；`dpp install --offline` 只使用全局 archive cache，缺归档即失败。两者可组合。`add` / `update --offline` 使用 `~/.cache/dpp/metadata` 的 Modrinth 版本元数据缓存：在线成功响应缓存 5 分钟，离线时忽略过期；求解后仍要求选中的归档已在 archive cache，缺元数据或归档即失败，不回退网络。`--locked` 仍只属于 `install`。
 
 `dpp order` 在疑似关闭的世界里读取 `level.dat` 的 `DataPacks.Enabled`，按 `(load_weight, id, install_name)` 报告期望顺序；`session.lock` 存在时报告 `unknown`，不猜 `/datapack list` 的顺序。`--print-commands` 只打印 `/datapack enable ... before ...` 建议，`--json` 输出结构化报告；不写 `level.dat`，不执行命令。
 

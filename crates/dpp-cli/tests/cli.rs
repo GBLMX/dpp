@@ -1279,3 +1279,36 @@ fn install_locked_and_offline_require_lockfile() {
             .stderr(predicate::str::contains("requires an existing lock.toml"));
     }
 }
+
+#[test]
+fn add_offline_requires_metadata_cache() {
+    let cache = tempfile::tempdir().unwrap();
+    let world = world();
+    dpp()
+        .args(["--world", world.path().to_str().unwrap(), "init"])
+        .assert()
+        .success();
+    dpp()
+        .args([
+            "--world",
+            world.path().to_str().unwrap(),
+            "update",
+            "--offline",
+        ])
+        .env("XDG_CACHE_HOME", cache.path())
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("already up to date"));
+    dpp()
+        .args([
+            "--world",
+            world.path().to_str().unwrap(),
+            "add",
+            "demo",
+            "--offline",
+        ])
+        .env("XDG_CACHE_HOME", cache.path())
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("metadata cache is missing"));
+}

@@ -676,7 +676,7 @@ fn selected_matches_lock(package: &SolvedPackage, locked: &LockPackage) -> bool 
 }
 
 fn ensure_cached(client: &ModrinthClient, file: &VersionFile) -> Result<PathBuf> {
-    ensure_cached_with_mode(client, file, false)
+    ensure_cached_with_mode(client, file, client.is_offline())
 }
 
 fn ensure_cached_with_mode(
@@ -1496,6 +1496,26 @@ mod tests {
         .unwrap_err();
         assert!(error.to_string().contains("offline mode"));
         assert!(!paths.root().join("datapacks/0050_missing").exists());
+    }
+
+    #[test]
+    fn offline_client_rejects_missing_archive() {
+        let client = ModrinthClient::with_base_url("http://127.0.0.1:9/v2", "dpp-offline-test")
+            .unwrap()
+            .with_offline(true);
+        let file = VersionFile {
+            filename: "missing.zip".to_owned(),
+            hashes: Hashes {
+                sha512: "c".repeat(128),
+                sha1: None,
+            },
+            url: "http://127.0.0.1:9/missing.zip".to_owned(),
+            primary: true,
+            size: 1,
+            file_type: None,
+        };
+        let error = ensure_cached(&client, &file).unwrap_err();
+        assert!(error.to_string().contains("offline mode: archive"));
     }
 
     #[test]

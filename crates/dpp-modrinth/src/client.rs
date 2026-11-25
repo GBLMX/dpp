@@ -1,17 +1,25 @@
 use std::fs;
 use std::io::{Read, Write as IoWrite};
 use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha512};
 use tempfile::NamedTempFile;
 
 use crate::types::{DownloadReport, ProjectVersion, SearchResponse, VersionFile};
 
 const DEFAULT_BASE_URL: &str = "https://api.modrinth.com/v2";
+const METADATA_TTL_SECS: u64 = 300;
+
+#[derive(Debug, Serialize, Deserialize)]
+struct MetadataCacheFile {
+    fetched_at: u64,
+    versions: Vec<ProjectVersion>,
+}
 
 #[derive(Debug, thiserror::Error)]
 pub enum ModrinthError {
@@ -85,12 +93,40 @@ pub enum ModrinthError {
         expected: String,
         actual: String,
     },
+    #[error("offline mode requires a metadata cache directory")]
+    MetadataCacheUnavailable,
+
+    #[error("offline mode: metadata cache is missing at {path}")]
+    MetadataCacheMissing { path: PathBuf },
+
+    #[error("failed to read metadata cache {path}: {source}")]
+    MetadataCacheRead {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
+    #[error("failed to decode metadata cache {path}: {source}")]
+    MetadataCacheDecode {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+
+    #[error("failed to write metadata cache {path}: {source}")]
+    MetadataCacheWrite {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
 }
 
 #[derive(Debug, Clone)]
 pub struct ModrinthClient {
     http: Client,
     base_url: String,
+    metadata_dir: Option<PathBuf>,
+    offline: bool,
 }
 
 impl ModrinthClient {
@@ -121,7 +157,23 @@ impl ModrinthClient {
         Ok(Self {
             http,
             base_url: base_url.into().trim_end_matches('/').to_owned(),
+            metadata_dir: None,
+            offline: false,
         })
+    }
+
+    pub fn with_metadata_cache(mut self, directory: impl Into<PathBuf>) -> Self {
+        self.metadata_dir = Some(directory.into());
+        self
+    }
+
+    pub fn with_offline(mut self, offline: bool) -> Self {
+        self.offline = offline;
+        self
+    }
+
+    pub fn is_offline(&self) -> bool {
+        self.offline
     }
 
     pub fn search(
@@ -159,6 +211,26 @@ impl ModrinthClient {
         project_id: &str,
         game_version: Option<&str>,
     ) -> Result<Vec<ProjectVersion>, ModrinthError> {
+        let cache_path = self.metadata_cache_path(project_id, game_version);
+        if self.offline && cache_path.is_none() {
+            return Err(ModrinthError::MetadataCacheUnavailable);
+        }
+        if let Some(path) = &cache_path {
+            match read_metadata_cache(path) {
+                Ok(Some(cached)) => {
+                    let fresh = now_unix().saturating_sub(cached.fetched_at) <= METADATA_TTL_SECS;
+                    if self.offline || fresh {
+                        return Ok(cached.versions);
+                    }
+                }
+                Ok(None) if self.offline => {
+                    return Err(ModrinthError::MetadataCacheMissing { path: path.clone() });
+                }
+                Err(error) if self.offline => return Err(error),
+                Ok(None) | Err(_) => {}
+            }
+        }
+
         let mut query = vec![
             ("loaders", "[\"datapack\"]".to_owned()),
             ("include_changelog", "false".to_owned()),
@@ -167,8 +239,25 @@ impl ModrinthClient {
             let versions = serde_json::to_string(&[version]).map_err(ModrinthError::Serialize)?;
             query.push(("game_versions", versions));
         }
+        let versions: Vec<ProjectVersion> =
+            self.get_json(&format!("/project/{project_id}/version"), &query)?;
+        if let Some(path) = &cache_path {
+            let _ = write_metadata_cache(path, &versions);
+        }
+        Ok(versions)
+    }
 
-        self.get_json(&format!("/project/{project_id}/version"), &query)
+    fn metadata_cache_path(&self, project_id: &str, game_version: Option<&str>) -> Option<PathBuf> {
+        let directory = self.metadata_dir.as_ref()?;
+        let key = format!(
+            "{}|{}|{}",
+            self.base_url,
+            project_id,
+            game_version.unwrap_or("")
+        );
+        let mut hasher = Sha512::new();
+        hasher.update(key.as_bytes());
+        Some(directory.join(format!("{}.json", hex_digest(&hasher.finalize()))))
     }
 
     /// Download a version file atomically, verifying its size and sha512.
@@ -319,6 +408,50 @@ impl ModrinthClient {
     }
 }
 
+fn now_unix() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
+fn read_metadata_cache(path: &Path) -> Result<Option<MetadataCacheFile>, ModrinthError> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(source) => {
+            return Err(ModrinthError::MetadataCacheRead {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    serde_json::from_slice(&bytes)
+        .map(Some)
+        .map_err(|source| ModrinthError::MetadataCacheDecode {
+            path: path.to_path_buf(),
+            source,
+        })
+}
+
+fn write_metadata_cache(path: &Path, versions: &[ProjectVersion]) -> Result<(), ModrinthError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|source| ModrinthError::MetadataCacheWrite {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    }
+    let cache = MetadataCacheFile {
+        fetched_at: now_unix(),
+        versions: versions.to_vec(),
+    };
+    let bytes = serde_json::to_vec(&cache).map_err(ModrinthError::Serialize)?;
+    fs::write(path, bytes).map_err(|source| ModrinthError::MetadataCacheWrite {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
 fn hex_digest(bytes: &[u8]) -> String {
     let mut output = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
@@ -421,5 +554,48 @@ mod tests {
             Err(ModrinthError::ChecksumMismatch { .. })
         ));
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn caches_project_versions_and_serves_offline() {
+        let body = br#"[{"id":"v1","project_id":"project","version_number":"1.0.0","game_versions":["26.3"],"loaders":["datapack"]}]"#.to_vec();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let base_url = format!("http://{address}/v2");
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 2048];
+            let _ = stream.read(&mut request);
+            let header = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(header.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+        });
+        let cache = tempfile::tempdir().unwrap();
+        let client = ModrinthClient::with_base_url(base_url.clone(), "dpp-test")
+            .unwrap()
+            .with_metadata_cache(cache.path().to_path_buf());
+        let versions = client.project_versions("project", Some("26.3")).unwrap();
+        server.join().unwrap();
+        assert_eq!(versions.len(), 1);
+
+        let offline = ModrinthClient::with_base_url(base_url, "dpp-test")
+            .unwrap()
+            .with_metadata_cache(cache.path().to_path_buf())
+            .with_offline(true);
+        let cached = offline.project_versions("project", Some("26.3")).unwrap();
+        assert_eq!(cached, versions);
+
+        let empty = tempfile::tempdir().unwrap();
+        let missing = ModrinthClient::with_base_url("http://127.0.0.1:9/v2", "dpp-test")
+            .unwrap()
+            .with_metadata_cache(empty.path().to_path_buf())
+            .with_offline(true);
+        assert!(matches!(
+            missing.project_versions("project", Some("26.3")),
+            Err(ModrinthError::MetadataCacheMissing { .. })
+        ));
     }
 }

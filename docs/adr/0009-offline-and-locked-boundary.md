@@ -1,8 +1,8 @@
 # ADR-0009: 严格安装模式只覆盖 install
 
-- 状态：Accepted
+- 状态：Superseded by [ADR-0010](0010-metadata-cache-and-offline-resolution.md) for `add/update --offline`; install boundary remains.
 - 日期：2026-11-25
-- 实现状态：已实现 `dpp install --locked`、`--offline` 及组合；`add/update --offline` 明确不支持。
+- 实现状态：`dpp install --locked`、`--offline` 及组合已实现；`add/update --offline` 由 ADR-0010 的 metadata cache 接管。
 
 ## Context
 

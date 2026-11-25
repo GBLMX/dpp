@@ -247,7 +247,7 @@ priority = 20
 - 候选：先按目标 pack format 过滤，再按版本范围过滤。
 - 版本排序：`LooseVersion`（自然排序）→ `published_at` → `version_id`。不要直接用 SemVer 比较 `5.5.4+26.3`。
 - 两阶段：
-  1. 物化候选：API 查版本列表；需要元数据时下载 zip，读 `dpp.toml` + `pack.mcmeta`，缓存到 `~/.cache/dpp/meta/<sha512>.json`。
+  1. 物化候选：API 查版本列表；在线成功响应缓存到 `~/.cache/dpp/metadata/<sha512(base_url|project|mc_version)>.json`，TTL 300 秒。离线读取同一缓存并忽略过期；需要包内元数据时再下载 zip，读 `dpp.toml` + `pack.mcmeta`。
   2. 离线 pubgrub：`OfflineDependencyProvider` + `DefaultStringReporter`；失败信息必须能说明“没有版本支持 pack format X”。
 - 冲突：`[conflicts]` 和 Modrinth `incompatible` 先正常求解；发现冲突对后禁用候选并有界重试，已有 lock 版本作为偏好。不要硬编码成 pubgrub 虚拟包。
 - 目标 MC/pack format 变化时，lock 失效；`dpp check` 警告，`dpp update` 重新求解。
@@ -287,8 +287,8 @@ priority = 20
 
 ### 7.4 严格模式
 
-- `--locked`：manifest 与 lock 不一致时失败，不改写 lock；仍允许为缺失 artifact 下载。
-- `--offline`：只用缓存；缺任何 artifact 即失败。
+- `--locked`：仅 `install`；manifest 与 lock 不一致时失败，不改写 lock；仍允许为缺失 artifact 下载。
+- `--offline`：`install` 只用 archive cache，缺归档即失败；`add` / `update` 用 metadata cache 求解，并只用 archive cache 取包，缺元数据或归档即失败，都不回退网络。`add` / `update --offline` 不保证 lock 可复现，只保证求解不联网。
 - 不定义 `--frozen`：Cargo 的语义是 `--locked + --offline`，uv 是“用 lock 但不检查新鲜度”，容易混淆；dpp 用显式组合。见 [research-toolchain.md](research-toolchain.md)。
 
 ## 8. 加载顺序
@@ -304,10 +304,10 @@ priority = 20
 | `dpp new <name>` | 生成 Beet 兼容数据包骨架；不调用 Beet/Python | 是 |
 | `dpp init` | 识别 world/pack，创建 `dpp.toml` 和 `.dpp/` | 是 |
 | `dpp search <query>` | 搜索 Modrinth（`categories:datapack`） | 是 |
-| `dpp add <pkg>` | 添加直接依赖、求解、锁定、安装 | 是 |
+| `dpp add <pkg> [--offline]` | 添加直接依赖、求解、锁定、安装；`--offline` 只用 metadata cache | 是 |
 | `dpp remove <pkg> [--stage]` | 删除直接依赖并清理孤儿；`--stage` 只写 plan | 是 |
 | `dpp install [--stage] [--locked] [--offline]` | 按 lock 同步包层；`--stage` 只写 plan；严格模式要求 lock | 是 |
-| `dpp update [--stage]` | 重新求解并提交；`--stage` 只写 plan | 是 |
+| `dpp update [--stage] [--offline]` | 重新求解并提交；`--stage` 只写 plan；`--offline` 只用 metadata cache | 是 |
 | `dpp apply [--dry-run] [--manual] [--rcon] [--log PATH] [--abort] [--rollback]` | 提交 staged plan；激活并验证；可 abort/rollback | 是 |
 | `dpp status` | 报告五态；`--json` | 是 |
 | `dpp check` | 格式、lock/index 一致性、逐文件 sha512、managed 目录缺失/额外文件、外来 datapacks、顺序偏差 | 是 |

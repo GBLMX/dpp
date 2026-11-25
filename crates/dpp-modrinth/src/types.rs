@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct SearchResponse {
@@ -45,7 +45,7 @@ impl SearchHit {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ProjectVersion {
     pub id: String,
     pub project_id: String,
@@ -105,7 +105,7 @@ fn is_datapack_zip(filename: &str) -> bool {
     filename.to_ascii_lowercase().ends_with(".zip")
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct VersionFile {
     pub filename: String,
     pub hashes: Hashes,
@@ -118,14 +118,14 @@ pub struct VersionFile {
     pub file_type: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Hashes {
     pub sha512: String,
     #[serde(default)]
     pub sha1: Option<String>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct Dependency {
     #[serde(default)]
     pub version_id: Option<String>,
