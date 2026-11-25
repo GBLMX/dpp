@@ -333,7 +333,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -352,7 +352,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fastnbt",
  "flate2",
@@ -368,7 +368,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-modrinth"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "reqwest",
  "serde",
@@ -380,7 +380,7 @@ dependencies = [
 
 [[package]]
 name = "dpp-ops"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dpp-core",
