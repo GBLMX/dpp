@@ -14,6 +14,7 @@
 | [0006](0006-config-patches.md) | 配置补丁延后，限定实例层 JSON/TOML | Accepted | JSON/TOML allowlist、merge/replace、基线冲突与备份已实现；package 绑定/YAML 未实现 |
 | [0007](0007-transaction-and-snapshot.md) | 事务回滚与持久快照分离 | Accepted | 事务/journal 恢复、managed 包快照 save/restore/list 与 remove 自动快照已实现；config 快照未实现 |
 | [0008](0008-toolchain-and-seed.md) | 与 Beet/Smithed 互补，种子库后置 | Accepted | 已实现：`stdlib/`、`dpp new`、`dpp build-pack` |
+| [0009](0009-offline-and-locked-boundary.md) | 严格安装模式只覆盖 install | Accepted | 已实现 `install --locked/--offline`；add/update offline 仍等待 metadata cache |
 
 ## 约定
 
