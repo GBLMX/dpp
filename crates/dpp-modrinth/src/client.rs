@@ -435,21 +435,34 @@ fn read_metadata_cache(path: &Path) -> Result<Option<MetadataCacheFile>, Modrint
 }
 
 fn write_metadata_cache(path: &Path, versions: &[ProjectVersion]) -> Result<(), ModrinthError> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|source| ModrinthError::MetadataCacheWrite {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent).map_err(|source| ModrinthError::MetadataCacheWrite {
+        path: path.to_path_buf(),
+        source,
+    })?;
     let cache = MetadataCacheFile {
         fetched_at: now_unix(),
         versions: versions.to_vec(),
     };
     let bytes = serde_json::to_vec(&cache).map_err(ModrinthError::Serialize)?;
-    fs::write(path, bytes).map_err(|source| ModrinthError::MetadataCacheWrite {
-        path: path.to_path_buf(),
-        source,
-    })
+    let mut temporary =
+        NamedTempFile::new_in(parent).map_err(|source| ModrinthError::MetadataCacheWrite {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    temporary
+        .write_all(&bytes)
+        .map_err(|source| ModrinthError::MetadataCacheWrite {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    temporary
+        .persist(path)
+        .map_err(|error| ModrinthError::MetadataCacheWrite {
+            path: path.to_path_buf(),
+            source: error.error,
+        })?;
+    Ok(())
 }
 
 fn hex_digest(bytes: &[u8]) -> String {
@@ -587,6 +600,18 @@ mod tests {
             .with_offline(true);
         let cached = offline.project_versions("project", Some("26.3")).unwrap();
         assert_eq!(cached, versions);
+
+        let cache_file = std::fs::read_dir(cache.path())
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        std::fs::write(&cache_file, b"{").unwrap();
+        assert!(matches!(
+            offline.project_versions("project", Some("26.3")),
+            Err(ModrinthError::MetadataCacheDecode { .. })
+        ));
 
         let empty = tempfile::tempdir().unwrap();
         let missing = ModrinthClient::with_base_url("http://127.0.0.1:9/v2", "dpp-test")
