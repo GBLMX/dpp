@@ -39,7 +39,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install from git
         run: |
-          cargo install --git "https://github.com/${GITHUB_REPOSITORY}" --locked --package dpp-cli --bin dpp --root "${RUNNER_TEMP}/dpp-install"
+          cargo install --git "https://github.com/${GITHUB_REPOSITORY}" --locked dpp-cli --bin dpp --root "${RUNNER_TEMP}/dpp-install"
       - name: Smoke test installed binary
         run: |
           "${RUNNER_TEMP}/dpp-install/bin/dpp" --version

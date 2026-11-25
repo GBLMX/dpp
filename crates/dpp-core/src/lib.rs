@@ -1,5 +1,10 @@
 //! Core domain types and filesystem primitives for dpp.
 
+// DppError carries rich context (paths and source errors). Boxing every DppResult
+// would change the public API and allocate on all error paths; the lint is a
+// performance heuristic that is not relevant for these cold filesystem errors.
+#![allow(clippy::result_large_err)]
+
 pub mod applied;
 pub mod error;
 pub mod extract;

@@ -100,7 +100,7 @@ Rust workspace 已建立；目前可运行：
 解压后把 `dpp`（Windows 为 `dpp.exe`）加入 `PATH`。Release 附带同名 `.sha256` 文件用于校验。也可从源码安装：
 
 ```sh
-cargo install --git https://github.com/GBLMX/dpp --locked --package dpp-cli --bin dpp
+cargo install --git https://github.com/GBLMX/dpp --locked dpp-cli --bin dpp
 ```
 
 ## 开发
