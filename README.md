@@ -126,3 +126,7 @@ dpp cache clean
 ## 仓库状态
 
 Rust workspace 已实现 `new`/`init`/`add`/`remove`/`install`/`update`/`apply`/`status`/`order`/`check`/`search`/`inspect`/`build-pack`/`host`/`snapshot`/`config`/`adapter`，以及包内 `dpp.toml` 依赖求解。尚未实现自动重启、完整语义日志分析和包发布；这些按 [docs/feasibility.md](docs/feasibility.md) 的顺序推进。`dpp order` 只读报告期望/实际顺序，不写 `level.dat`，不执行 `/datapack enable`。
+
+## 许可证
+
+本项目采用 `MIT OR Apache-2.0` 双许可，任选其一。许可证全文见 [LICENSE-MIT](LICENSE-MIT) 与 [LICENSE-APACHE](LICENSE-APACHE)。

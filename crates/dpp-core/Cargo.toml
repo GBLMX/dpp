@@ -4,6 +4,7 @@ description = "Core types and filesystem primitives for dpp"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
+license.workspace = true
 
 [dependencies]
 fastnbt.workspace = true
