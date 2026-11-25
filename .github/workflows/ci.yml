@@ -13,8 +13,12 @@ env:
 
 jobs:
   test:
-    name: fmt / clippy / test
-    runs-on: ubuntu-latest
+    name: fmt / clippy / test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-15]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -24,3 +28,18 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo test --workspace --locked
+
+  install:
+    name: cargo install --git
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install from git
+        run: |
+          cargo install --git "https://github.com/${GITHUB_REPOSITORY}" --locked --package dpp-cli --bin dpp --root "${RUNNER_TEMP}/dpp-install"
+      - name: Smoke test installed binary
+        run: |
+          "${RUNNER_TEMP}/dpp-install/bin/dpp" --version

@@ -45,6 +45,15 @@ jobs:
       - name: Build
         run: cargo build --release --locked -p dpp-cli --bin dpp --target ${{ matrix.target }}
 
+      - name: Smoke test
+        shell: bash
+        run: |
+          binary="target/${{ matrix.target }}/release/dpp"
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            binary="${binary}.exe"
+          fi
+          "$binary" --version
+
       - name: Package (Unix)
         if: runner.os != 'Windows'
         shell: bash
