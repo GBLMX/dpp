@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use dpp_core::{
-    DEFAULT_LOAD_WEIGHT, Dependency, DppError, ExtractedFile, HostProfile, IndexFile,
-    IndexFileEntry, IndexPackage, LockFile, LockPackage, PackFormat, PackManifest, WorldManifest,
-    WorldPaths, archive_cache_path, extract_zip, inspect_zip, sha512_file,
+    DEFAULT_LOAD_WEIGHT, Dependency, ExtractedFile, HostProfile, IndexFile, IndexFileEntry,
+    IndexPackage, LockFile, LockPackage, PackFormat, PackManifest, WorldManifest, WorldPaths,
+    archive_cache_path, extract_zip, inspect_zip, sha512_file,
 };
 use dpp_modrinth::{Hashes, ModrinthClient, ProjectVersion, VersionFile};
 use tempfile::TempDir;
@@ -101,69 +101,123 @@ pub fn add_package(
     let staging = create_staging(world)?;
     let mut prepared = Vec::new();
     let mut removed = BTreeSet::new();
+    let mut skipped = Vec::new();
 
-    let (new_lock, mut new_index) = if let Some(mut lock) =
-        existing_lock.filter(|lock| !lock.packages.is_empty())
-    {
-        check_lock_target(&lock, target, mc_version)?;
-        validate_lock_packages(&lock)?;
-        check_lock_covers_other_direct_dependencies(&manifest, &lock, project)?;
+    let (new_lock, mut new_index) =
+        if let Some(lock) = existing_lock.filter(|lock| !lock.packages.is_empty()) {
+            check_lock_target(&lock, target, mc_version)?;
+            validate_lock_packages(&lock)?;
+            check_lock_covers_other_direct_dependencies(&manifest, &lock, project)?;
 
-        let selected = resolve_project(client, project, mc_version, target)?;
-        let install_name = choose_install_name(project, &lock, &index)?;
-        let prepared_package = prepare_selected(&selected, &install_name, staging.path(), target)?;
-        ensure_manifest_supported(prepared_package.manifest.as_ref(), host)?;
+            let preferences = crate::solver::preferences_from_lock(&lock);
+            let selected = crate::solver::solve_world_with_preferences(
+                &manifest,
+                mc_version,
+                target,
+                client,
+                &preferences,
+            )?;
+            let mut new_lock = LockFile::default();
+            new_lock.metadata.mc_version = Some(mc_version.to_owned());
+            new_lock.metadata.pack_format = Some(target);
+            new_lock.metadata.resolver = Some(format!("dpp {}", env!("CARGO_PKG_VERSION")));
+            let mut selected_ids = BTreeSet::new();
 
-        lock.metadata.mc_version = Some(mc_version.to_owned());
-        lock.metadata.pack_format = Some(target);
-        lock.metadata.resolver = Some(format!("dpp {}", env!("CARGO_PKG_VERSION")));
-        lock.packages
-            .retain(|package| !(package.id == project && package.source == "modrinth"));
-        lock.packages.push(prepared_package.lock.clone());
-
-        if let Some(old) = index.find(project, "modrinth") {
-            if old.install_name != install_name {
-                removed.insert(old.install_name.clone());
+            for package in selected {
+                ensure_host_preflight(package.manifest.as_ref(), host)?;
+                let old_lock = lock
+                    .packages
+                    .iter()
+                    .find(|locked| locked.id == package.source && locked.source == "modrinth");
+                let install_name = match old_lock {
+                    Some(locked) => locked.install_name.clone(),
+                    None => choose_install_name(&package.source, &lock, &index)?,
+                };
+                let lock_package = if let Some(locked) = old_lock
+                    && selected_matches_lock(&package, locked)
+                    && package_current(world, &index, locked)
+                {
+                    skipped.push(package.source.clone());
+                    locked.clone()
+                } else {
+                    let selected = SelectedVersion {
+                        project: package.source.clone(),
+                        version: package.version.clone(),
+                        file: package.file.clone(),
+                        archive: package.archive.clone(),
+                    };
+                    let mut prepared_package =
+                        prepare_selected(&selected, &install_name, staging.path(), target)?;
+                    if let Some(locked) = old_lock {
+                        prepared_package.lock.load_weight = locked.load_weight;
+                    }
+                    let lock_package = prepared_package.lock.clone();
+                    prepared.push(prepared_package);
+                    lock_package
+                };
+                selected_ids.insert((lock_package.id.clone(), lock_package.source.clone()));
+                new_lock.packages.push(lock_package);
             }
-        }
-        let mut new_index = index.clone();
-        new_index
-            .packages
-            .retain(|package| !(package.id == project && package.source == "modrinth"));
-        new_index.packages.push(prepared_package.index.clone());
-        prepared.push(prepared_package);
-        (lock, new_index)
-    } else {
-        let mut lock = LockFile::default();
-        lock.metadata.mc_version = Some(mc_version.to_owned());
-        lock.metadata.pack_format = Some(target);
-        lock.metadata.resolver = Some(format!("dpp {}", env!("CARGO_PKG_VERSION")));
 
-        for package in solve_world(&manifest, mc_version, target, client)? {
-            ensure_host_preflight(package.manifest.as_ref(), host)?;
-            let install_name = choose_install_name(&package.source, &lock, &index)?;
-            let selected = SelectedVersion {
-                project: package.source,
-                version: package.version,
-                file: package.file,
-                archive: package.archive,
-            };
-            let prepared_package =
-                prepare_selected(&selected, &install_name, staging.path(), target)?;
-            lock.packages.push(prepared_package.lock.clone());
-            prepared.push(prepared_package);
-        }
+            for old in &lock.packages {
+                if !selected_ids.contains(&(old.id.clone(), old.source.clone())) {
+                    removed.insert(old.install_name.clone());
+                }
+            }
+            for old in &index.packages {
+                if !selected_ids.contains(&(old.id.clone(), old.source.clone())) {
+                    removed.insert(old.install_name.clone());
+                }
+            }
 
-        let desired = lock.clone();
-        let mut new_index = prune_index(&index, &desired, &mut removed);
-        for package in &prepared {
-            new_index.packages.retain(|entry| {
-                !(entry.id == package.lock.id && entry.source == package.lock.source)
-            });
-            new_index.packages.push(package.index.clone());
-        }
-        (lock, new_index)
-    };
+            let mut new_index = IndexFile::default();
+            for package in &new_lock.packages {
+                if let Some(entry) = prepared.iter().find(|entry| {
+                    entry.lock.id == package.id && entry.lock.source == package.source
+                }) {
+                    new_index.packages.push(entry.index.clone());
+                } else if let Some(entry) = index.find(&package.id, &package.source) {
+                    new_index.packages.push(entry.clone());
+                } else {
+                    bail!(
+                        "lock package {} ({}) has no index entry; run dpp install",
+                        package.id,
+                        package.install_name
+                    );
+                }
+            }
+            (new_lock, new_index)
+        } else {
+            let mut lock = LockFile::default();
+            lock.metadata.mc_version = Some(mc_version.to_owned());
+            lock.metadata.pack_format = Some(target);
+            lock.metadata.resolver = Some(format!("dpp {}", env!("CARGO_PKG_VERSION")));
+
+            for package in solve_world(&manifest, mc_version, target, client)? {
+                ensure_host_preflight(package.manifest.as_ref(), host)?;
+                let install_name = choose_install_name(&package.source, &lock, &index)?;
+                let selected = SelectedVersion {
+                    project: package.source,
+                    version: package.version,
+                    file: package.file,
+                    archive: package.archive,
+                };
+                let prepared_package =
+                    prepare_selected(&selected, &install_name, staging.path(), target)?;
+                lock.packages.push(prepared_package.lock.clone());
+                prepared.push(prepared_package);
+            }
+
+            let desired = lock.clone();
+            let mut new_index = prune_index(&index, &desired, &mut removed);
+            for package in &prepared {
+                new_index.packages.retain(|entry| {
+                    !(entry.id == package.lock.id && entry.source == package.lock.source)
+                });
+                new_index.packages.push(package.index.clone());
+            }
+            (lock, new_index)
+        };
 
     sort_index(&mut new_index);
     let installed = commit(
@@ -179,12 +233,24 @@ pub fn add_package(
         .iter()
         .find(|package| package.id == project)
         .cloned()
+        .or_else(|| {
+            new_lock
+                .packages
+                .iter()
+                .find(|package| package.id == project && package.source == "modrinth")
+                .map(|package| InstalledPackage {
+                    id: package.id.clone(),
+                    version: package.version_number.clone(),
+                    install_name: package.install_name.clone(),
+                    path: world.root().join("datapacks").join(&package.install_name),
+                })
+        })
         .context("add produced no installed package")?;
 
     Ok(AddReport {
         install: InstallReport {
             installed,
-            skipped: Vec::new(),
+            skipped,
             staged_plan: None,
         },
         package,
@@ -565,57 +631,11 @@ pub fn update_world(
     })
 }
 
-fn resolve_project(
-    client: &ModrinthClient,
-    project: &str,
-    mc_version: &str,
-    target: PackFormat,
-) -> Result<SelectedVersion> {
-    let versions = client
-        .project_versions(project, Some(mc_version))
-        .with_context(|| format!("failed to list Modrinth versions for {project}"))?;
-
-    let mut candidates: Vec<ProjectVersion> = versions
-        .into_iter()
-        .filter(|version| {
-            version.is_datapack()
-                && version.supports_game_version(mc_version)
-                && version.datapack_file().is_some()
-        })
-        .collect();
-    candidates.sort_by(|left, right| {
-        right
-            .date_published
-            .cmp(&left.date_published)
-            .then_with(|| right.id.cmp(&left.id))
-    });
-    candidates.truncate(10);
-
-    if candidates.is_empty() {
-        bail!("no datapack version of {project} supports Minecraft {mc_version}");
-    }
-
-    for version in candidates {
-        let file = version
-            .datapack_file()
-            .cloned()
-            .context("datapack version has no zip file")?;
-        let archive = ensure_cached(client, &file)?;
-        match inspect_zip(&archive, target) {
-            Ok(_) => {
-                return Ok(SelectedVersion {
-                    project: project.to_owned(),
-                    version,
-                    file,
-                    archive,
-                });
-            }
-            Err(DppError::PackIncompatible { .. }) => continue,
-            Err(error) => return Err(error.into()),
-        }
-    }
-
-    bail!("no datapack version of {project} is compatible with data pack format {target}")
+fn selected_matches_lock(package: &SolvedPackage, locked: &LockPackage) -> bool {
+    locked.version_id.as_deref() == Some(package.version.id.as_str())
+        && locked
+            .sha512
+            .eq_ignore_ascii_case(&package.file.hashes.sha512)
 }
 
 fn ensure_cached(client: &ModrinthClient, file: &VersionFile) -> Result<PathBuf> {
@@ -636,28 +656,6 @@ fn ensure_cached(client: &ModrinthClient, file: &VersionFile) -> Result<PathBuf>
         .download_file(file, &path)
         .with_context(|| format!("failed to download {}", file.url))?;
     Ok(path)
-}
-
-fn ensure_manifest_supported(
-    manifest: Option<&PackManifest>,
-    host: Option<&HostProfile>,
-) -> Result<()> {
-    let Some(manifest) = manifest else {
-        return Ok(());
-    };
-    if !manifest.dependencies.is_empty() {
-        bail!(
-            "pack {} declares datapack dependencies, but this operation does not solve them",
-            manifest.package.id
-        );
-    }
-    if !manifest.conflicts.is_empty() {
-        bail!(
-            "pack {} declares conflicts, but this operation does not solve them",
-            manifest.package.id
-        );
-    }
-    ensure_host_preflight(Some(manifest), host)
 }
 
 fn ensure_host_preflight(
@@ -1576,24 +1574,6 @@ mod tests {
         let manifest = WorldManifest::load(&paths.manifest()).unwrap();
         assert_eq!(manifest.dependencies.len(), 1);
         assert!(manifest.dependencies.contains_key("other"));
-    }
-
-    #[test]
-    fn rejects_unresolved_manifest_declarations() {
-        let manifest = PackManifest::from_toml_str(
-            r#"
-[package]
-id = "smithed:stdlib"
-version = "0.3.1"
-
-[dependencies]
-"smithed:events" = ">=0.2.0"
-"#,
-            Path::new("demo.zip"),
-        )
-        .unwrap();
-        let error = ensure_manifest_supported(Some(&manifest), None).unwrap_err();
-        assert!(error.to_string().contains("dependencies"));
     }
 
     #[test]

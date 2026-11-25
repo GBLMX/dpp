@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, anyhow, bail};
-use dpp_core::{Dependency, DppError, PackFormat, PackManifest, WorldManifest};
+use dpp_core::{Dependency, DppError, LockFile, PackFormat, PackManifest, WorldManifest};
 use dpp_modrinth::{ModrinthClient, ProjectVersion, VersionFile};
 use pubgrub::{
     Dependencies, DependencyConstraints, DependencyProvider, PackageResolutionStatistics, Ranges,
@@ -34,6 +34,27 @@ pub struct SolvedPackage {
     pub manifest: Option<PackManifest>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SolvePreferences {
+    versions: BTreeMap<String, Version>,
+    version_ids: BTreeMap<String, String>,
+}
+
+pub(crate) fn preferences_from_lock(lock: &LockFile) -> SolvePreferences {
+    let mut preferences = SolvePreferences::default();
+    for package in &lock.packages {
+        if let Ok(version) = Version::parse(&package.version_number) {
+            preferences.versions.insert(package.id.clone(), version);
+        }
+        if let Some(version_id) = &package.version_id {
+            preferences
+                .version_ids
+                .insert(package.id.clone(), version_id.clone());
+        }
+    }
+    preferences
+}
+
 #[derive(Clone)]
 struct Candidate {
     version: Version,
@@ -52,6 +73,7 @@ struct Provider<'a> {
     mc_version: &'a str,
     target: PackFormat,
     direct: &'a BTreeMap<String, Dependency>,
+    preferred: &'a SolvePreferences,
     candidates: RefCell<BTreeMap<String, Vec<Candidate>>>,
     resolved: RefCell<BTreeMap<(String, Version), ResolvedCandidate>>,
 }
@@ -62,10 +84,22 @@ pub fn solve_world(
     target: PackFormat,
     client: &ModrinthClient,
 ) -> Result<Vec<SolvedPackage>> {
+    let preferences = SolvePreferences::default();
+    solve_world_with_preferences(manifest, mc_version, target, client, &preferences)
+}
+
+pub(crate) fn solve_world_with_preferences(
+    manifest: &WorldManifest,
+    mc_version: &str,
+    target: PackFormat,
+    client: &ModrinthClient,
+    preferred: &SolvePreferences,
+) -> Result<Vec<SolvedPackage>> {
     let provider = Provider {
         client,
         mc_version,
         target,
+        preferred,
         direct: &manifest.dependencies,
         candidates: RefCell::new(BTreeMap::new()),
         resolved: RefCell::new(BTreeMap::new()),
@@ -301,7 +335,24 @@ impl DependencyProvider for Provider<'_> {
             return Ok(range.contains(&root).then_some(root));
         }
 
-        for candidate in self.load_candidates(package)? {
+        let candidates = self.load_candidates(package)?;
+        if let Some(preferred) = self.preferred.versions.get(package)
+            && let Some(candidate) = candidates.iter().find(|candidate| {
+                &candidate.version == preferred && range.contains(&candidate.version)
+            })
+            && self.compatible_candidate(package, candidate)?.is_some()
+        {
+            return Ok(Some(candidate.version.clone()));
+        }
+        if let Some(preferred) = self.preferred.version_ids.get(package)
+            && let Some(candidate) = candidates.iter().find(|candidate| {
+                candidate.project.id == *preferred && range.contains(&candidate.version)
+            })
+            && self.compatible_candidate(package, candidate)?.is_some()
+        {
+            return Ok(Some(candidate.version.clone()));
+        }
+        for candidate in candidates {
             if !range.contains(&candidate.version) {
                 continue;
             }

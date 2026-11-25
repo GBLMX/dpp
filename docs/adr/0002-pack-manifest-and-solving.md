@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-11-25
-- 实现状态：部分。包内 `dpp.toml` 解析与 pubgrub solver 已接入 `add`（无现成 lock）和 lock 缺失时的 `install`；已有 lock 的 `add` 仍只解析目标包，完整冲突回溯未实现。
+- 实现状态：部分。包内 `dpp.toml` 解析与 pubgrub solver 已接入 `add` / lock 缺失时的 `install` / `update`；已有 lock 的 `add` 以锁定版本为偏好并保留 `install_name`。声明冲突仍在求解后校验，未作为回溯约束。
 
 ## Context
 
