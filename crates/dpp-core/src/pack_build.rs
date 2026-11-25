@@ -273,6 +273,45 @@ fn read_small_text(path: &Path, limit: u64) -> DppResult<String> {
     })
 }
 
+fn zip_path_name(root: &Path, path: &Path) -> DppResult<String> {
+    let relative = path
+        .strip_prefix(root)
+        .map_err(|_| DppError::PackBuildInvalid {
+            path: path.to_path_buf(),
+            reason: "path is outside the source root".to_owned(),
+        })?;
+    let entry = relative.to_string_lossy().replace('\\', "/");
+    let mut parts = Vec::new();
+    for component in relative.components() {
+        let Component::Normal(part) = component else {
+            return Err(DppError::PackUnsafeEntry {
+                path: root.to_path_buf(),
+                entry,
+            });
+        };
+        let Some(part) = part.to_str() else {
+            return Err(DppError::PackBuildInvalid {
+                path: path.to_path_buf(),
+                reason: "non-UTF-8 paths are not supported".to_owned(),
+            });
+        };
+        if part.contains('/') || part.contains('\\') {
+            return Err(DppError::PackUnsafeEntry {
+                path: root.to_path_buf(),
+                entry,
+            });
+        }
+        parts.push(part);
+    }
+    if parts.is_empty() {
+        return Err(DppError::PackUnsafeEntry {
+            path: root.to_path_buf(),
+            entry,
+        });
+    }
+    Ok(parts.join("/"))
+}
+
 fn collect_files(
     root: &Path,
     current: &Path,
@@ -297,32 +336,7 @@ fn collect_files(
             path: path.clone(),
             source,
         })?;
-        let relative = path
-            .strip_prefix(root)
-            .map_err(|_| DppError::PackBuildInvalid {
-                path: path.clone(),
-                reason: "path is outside the source root".to_owned(),
-            })?;
-        let raw_name = relative
-            .to_str()
-            .ok_or_else(|| DppError::PackBuildInvalid {
-                path: path.clone(),
-                reason: "non-UTF-8 paths are not supported".to_owned(),
-            })?;
-
-        if raw_name.is_empty()
-            || relative
-                .components()
-                .any(|component| !matches!(component, Component::Normal(_)))
-            || raw_name.starts_with('/')
-            || raw_name.contains('\\')
-        {
-            return Err(DppError::PackUnsafeEntry {
-                path: root.to_path_buf(),
-                entry: raw_name.to_owned(),
-            });
-        }
-        let name = raw_name.to_owned();
+        let name = zip_path_name(root, &path)?;
         if metadata.file_type().is_symlink() {
             return Err(DppError::PackUnsafeEntry {
                 path: root.to_path_buf(),
