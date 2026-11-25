@@ -102,7 +102,7 @@ struct BuildPackArgs {
     #[arg(default_value = ".")]
     path: PathBuf,
 
-    /// Output zip path; defaults to <id>-<version>.zip beside the source.
+    /// Output zip path; defaults to a zip named from the package id and version beside the source.
     #[arg(long, value_name = "ZIP")]
     output: Option<PathBuf>,
 
