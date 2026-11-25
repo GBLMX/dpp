@@ -1108,17 +1108,44 @@ fn check_lock_target(lock: &LockFile, target: PackFormat, mc_version: &str) -> R
 }
 
 fn check_lock_has_direct_dependencies(manifest: &WorldManifest, lock: &LockFile) -> Result<()> {
-    let locked: BTreeSet<&str> = lock
-        .packages
-        .iter()
-        .map(|package| package.id.as_str())
-        .collect();
-    for dependency in manifest.dependencies.keys() {
-        if !locked.contains(dependency.as_str()) {
-            bail!("lock is missing direct dependency {dependency}; run dpp add");
-        }
+    for (dependency, requirement) in &manifest.dependencies {
+        let package = find_lock_package(lock, dependency).with_context(|| {
+            format!("lock is missing direct dependency {dependency}; run dpp add")
+        })?;
+        let requirement = dependency_version(requirement);
+        validate_locked_requirement(dependency, requirement, &package.version_number)?;
     }
     Ok(())
+}
+
+fn dependency_version(dependency: &Dependency) -> &str {
+    match dependency {
+        Dependency::Version(version) => version,
+        Dependency::Detailed(detail) => &detail.version,
+    }
+}
+
+fn validate_locked_requirement(
+    dependency: &str,
+    requirement: &str,
+    locked_version: &str,
+) -> Result<()> {
+    let range = semver::VersionReq::parse(requirement)
+        .with_context(|| format!("invalid version requirement {requirement:?} for {dependency}"))?;
+    if let Ok(version) = semver::Version::parse(locked_version) {
+        if range.matches(&version) {
+            return Ok(());
+        }
+        bail!(
+            "lock version {locked_version} for {dependency} does not satisfy manifest requirement {requirement}"
+        );
+    }
+    if requirement.trim() == "*" {
+        return Ok(());
+    }
+    bail!(
+        "lock version {locked_version} for {dependency} is not SemVer and cannot satisfy {requirement}"
+    );
 }
 
 fn check_lock_covers_other_direct_dependencies(
@@ -1494,6 +1521,40 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("--locked requires"));
+    }
+
+    #[test]
+    fn install_locked_rejects_version_mismatch() {
+        let directory = tempfile::tempdir().unwrap();
+        std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+        let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+        paths.ensure_state_dirs().unwrap();
+        let mut manifest = WorldManifest::default();
+        manifest
+            .dependencies
+            .insert("demo".to_owned(), Dependency::Version(">=2.0.0".to_owned()));
+        manifest.write_new(&paths.manifest()).unwrap();
+        LockFile {
+            packages: vec![test_package("demo", "0050_demo")],
+            ..LockFile::default()
+        }
+        .write(&paths.lock())
+        .unwrap();
+        let client =
+            ModrinthClient::with_base_url("http://127.0.0.1:9/v2", "dpp-offline-test").unwrap();
+        let error = install_world_with_options(
+            &paths,
+            "26.3",
+            PackFormat::new(121, 0),
+            &client,
+            None,
+            InstallOptions {
+                locked: true,
+                ..InstallOptions::default()
+            },
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("does not satisfy"));
     }
 
     #[test]
