@@ -801,10 +801,11 @@ fn prepare_lock(
 ) -> Result<PreparedPackage> {
     validate_install_name(&lock.install_name)?;
     let sha512 = validate_sha512(&lock.sha512)?;
-    let url = lock
-        .url
-        .clone()
-        .with_context(|| format!("lock package {} has no URL", lock.id))?;
+    let url = match lock.url.clone() {
+        Some(url) => url,
+        None if offline => String::new(),
+        None => bail!("lock package {} has no URL", lock.id),
+    };
     let file = VersionFile {
         filename: lock
             .file_name
@@ -1427,7 +1428,7 @@ mod tests {
         package.package_id = None;
         package.sha512 = sha.clone();
         package.size = Some(archive.len() as u64);
-        package.url = Some("http://127.0.0.1:9/pack.zip".to_owned());
+        package.url = None;
         LockFile {
             packages: vec![package],
             ..LockFile::default()
@@ -1472,7 +1473,7 @@ mod tests {
         let mut package = test_package("missing", "0050_missing");
         package.package_id = None;
         package.sha512 = "b".repeat(128);
-        package.url = Some("http://127.0.0.1:9/missing.zip".to_owned());
+        package.url = None;
         LockFile {
             packages: vec![package],
             ..LockFile::default()
