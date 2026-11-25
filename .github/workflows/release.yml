@@ -59,9 +59,9 @@ jobs:
           cp README.md LICENSE-MIT LICENSE-APACHE "dist/${name}/"
           tar -C dist -czf "dist/${name}.tar.gz" "${name}"
           if command -v sha256sum >/dev/null 2>&1; then
-            sha256sum "dist/${name}.tar.gz" > "dist/${name}.tar.gz.sha256"
+            (cd dist && sha256sum "${name}.tar.gz") > "dist/${name}.tar.gz.sha256"
           else
-            shasum -a 256 "dist/${name}.tar.gz" > "dist/${name}.tar.gz.sha256"
+            (cd dist && shasum -a 256 "${name}.tar.gz") > "dist/${name}.tar.gz.sha256"
           fi
           rm -rf "dist/${name}"
 
@@ -78,7 +78,7 @@ jobs:
           Copy-Item README.md, LICENSE-MIT, LICENSE-APACHE "dist/$name/"
           Compress-Archive -Path "dist/$name" -DestinationPath "dist/$name.zip"
           $hash = (Get-FileHash "dist/$name.zip" -Algorithm SHA256).Hash.ToLower()
-          "$hash  dist/$name.zip" | Set-Content "dist/$name.zip.sha256"
+          "$hash  $name.zip" | Set-Content "dist/$name.zip.sha256"
           Remove-Item -Recurse -Force "dist/$name"
 
       - uses: actions/upload-artifact@v7
