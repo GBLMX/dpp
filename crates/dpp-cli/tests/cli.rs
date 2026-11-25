@@ -110,7 +110,10 @@ fn version_is_available() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dpp 0.1.0"));
+        .stdout(predicate::str::contains(format!(
+            "dpp {}",
+            env!("CARGO_PKG_VERSION")
+        )));
 }
 
 #[test]
