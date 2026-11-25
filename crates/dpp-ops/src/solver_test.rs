@@ -5,15 +5,15 @@ use std::net::TcpListener;
 use std::thread;
 
 use dpp_core::{
-    DEFAULT_LOAD_WEIGHT, Dependency, LockFile, LockPackage, PackFormat, WorldManifest, WorldPaths,
-    archive_cache_path, sha512_bytes,
+    DEFAULT_LOAD_WEIGHT, Dependency, IndexFile, IndexPackage, LockFile, LockPackage, PackFormat,
+    WorldManifest, WorldPaths, archive_cache_path, sha512_bytes,
 };
 use dpp_modrinth::ModrinthClient;
 use zip::CompressionMethod;
 use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
-use super::{solve_world, update_world};
+use super::{add_package, solve_world, update_world};
 use crate::solver::{preferences_from_lock, solve_world_with_preferences};
 
 fn pack_zip(manifest: &str) -> Vec<u8> {
@@ -338,6 +338,9 @@ version = "1.1.0"
     let root_sha = sha512_bytes(&root_zip);
     let old_sha = sha512_bytes(&old_zip);
     let new_sha = sha512_bytes(&new_zip);
+    for sha in [&root_sha, &old_sha, &new_sha] {
+        let _ = std::fs::remove_file(archive_cache_path(sha));
+    }
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
     let base_url = format!("http://{address}");
@@ -449,6 +452,197 @@ version = "1.1.0"
         .find(|package| package.source == "dep-project")
         .unwrap();
     assert_eq!(dep.version.id, "dep-old");
+    let _ = std::fs::remove_file(archive_cache_path(&root_sha));
+    let _ = std::fs::remove_file(archive_cache_path(&old_sha));
+    let _ = std::fs::remove_file(archive_cache_path(&new_sha));
+}
+
+#[test]
+fn add_with_existing_lock_keeps_locked_dependency() {
+    let root_zip = pack_zip(
+        r#"
+[package]
+id = "test:root"
+version = "1.0.0"
+# add-with-existing-lock root
+
+[dependencies]
+"test:dep" = { version = ">=1.0.0, <2.0.0", project = "dep-project" }
+"#,
+    );
+    let old_zip = pack_zip(
+        r#"
+[package]
+id = "test:dep"
+version = "1.0.0"
+# add-with-existing-lock old
+"#,
+    );
+    let new_zip = pack_zip(
+        r#"
+[package]
+id = "test:dep"
+version = "1.1.0"
+# add-with-existing-lock new
+"#,
+    );
+    let old_size = old_zip.len();
+    let root_sha = sha512_bytes(&root_zip);
+    let old_sha = sha512_bytes(&old_zip);
+    let new_sha = sha512_bytes(&new_zip);
+    for sha in [&root_sha, &old_sha, &new_sha] {
+        let _ = std::fs::remove_file(archive_cache_path(sha));
+    }
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = listener.local_addr().unwrap();
+    let base_url = format!("http://{address}");
+    let root_json = version_json(
+        "root-project",
+        "root-version",
+        "1.0.0",
+        &format!("{base_url}/root.zip"),
+        &root_sha,
+        root_zip.len(),
+    );
+    let dep_json = format!(
+        "[{},{}]",
+        version_json(
+            "dep-project",
+            "dep-new",
+            "1.1.0",
+            &format!("{base_url}/dep-new.zip"),
+            &new_sha,
+            new_zip.len(),
+        )
+        .trim_start_matches('[')
+        .trim_end_matches(']'),
+        version_json(
+            "dep-project",
+            "dep-old",
+            "1.0.0",
+            &format!("{base_url}/dep-old.zip"),
+            &old_sha,
+            old_size,
+        )
+        .trim_start_matches('[')
+        .trim_end_matches(']'),
+    );
+    let server = thread::spawn(move || {
+        for _ in 0..4 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = [0u8; 4096];
+            let read = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..read]);
+            let path = request
+                .lines()
+                .next()
+                .and_then(|line| line.split_whitespace().nth(1))
+                .unwrap_or_default();
+            let (status, content_type, body): (&str, &str, Vec<u8>) =
+                if path.starts_with("/v2/project/root-project/version") {
+                    ("200 OK", "application/json", root_json.as_bytes().to_vec())
+                } else if path.starts_with("/v2/project/dep-project/version") {
+                    ("200 OK", "application/json", dep_json.as_bytes().to_vec())
+                } else if path == "/root.zip" {
+                    ("200 OK", "application/zip", root_zip.clone())
+                } else if path == "/dep-old.zip" {
+                    ("200 OK", "application/zip", old_zip.clone())
+                } else if path == "/dep-new.zip" {
+                    ("200 OK", "application/zip", new_zip.clone())
+                } else {
+                    ("404 Not Found", "text/plain", b"not found".to_vec())
+                };
+            let header = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(header.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+        }
+    });
+
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join("level.dat"), b"fixture").unwrap();
+    let paths = WorldPaths::discover(Some(directory.path())).unwrap();
+    paths.ensure_state_dirs().unwrap();
+    WorldManifest::default()
+        .write_new(&paths.manifest())
+        .unwrap();
+    let dep_lock = LockPackage {
+        id: "dep-project".to_owned(),
+        package_id: Some("test:dep".to_owned()),
+        source: "modrinth".to_owned(),
+        project_id: Some("dep-project".to_owned()),
+        version_id: Some("dep-old".to_owned()),
+        version_number: "1.0.0".to_owned(),
+        published_at: None,
+        sha512: old_sha.clone(),
+        sha1: None,
+        size: Some(old_size as u64),
+        url: None,
+        file_name: None,
+        manifest_hash: None,
+        install_name: "0050_dep".to_owned(),
+        load_weight: 10,
+    };
+    LockFile {
+        packages: vec![dep_lock.clone()],
+        ..LockFile::default()
+    }
+    .write(&paths.lock())
+    .unwrap();
+    IndexFile {
+        packages: vec![IndexPackage {
+            id: "dep-project".to_owned(),
+            package_id: Some("test:dep".to_owned()),
+            source: "modrinth".to_owned(),
+            version_id: Some("dep-old".to_owned()),
+            sha512: old_sha.clone(),
+            install_name: "0050_dep".to_owned(),
+            files: Vec::new(),
+        }],
+        ..IndexFile::default()
+    }
+    .write(&paths.index())
+    .unwrap();
+    std::fs::create_dir_all(paths.root().join("datapacks/0050_dep")).unwrap();
+
+    let client =
+        ModrinthClient::with_base_url(format!("{base_url}/v2"), "dpp-solver-test").unwrap();
+    let report = add_package(
+        &paths,
+        "root-project",
+        "26.3",
+        PackFormat::new(121, 0),
+        &client,
+        None,
+    )
+    .unwrap();
+    server.join().unwrap();
+
+    assert_eq!(report.package.id, "root-project");
+    let lock = LockFile::load(&paths.lock()).unwrap();
+    let dep = lock
+        .packages
+        .iter()
+        .find(|package| package.id == "dep-project")
+        .unwrap();
+    assert_eq!(dep.version_id.as_deref(), Some("dep-old"));
+    assert_eq!(dep.install_name, "0050_dep");
+    assert_eq!(dep.load_weight, 10);
+    assert!(
+        lock.packages
+            .iter()
+            .any(|package| package.id == "root-project")
+    );
+    assert!(
+        paths
+            .root()
+            .join("datapacks")
+            .join(&report.package.install_name)
+            .is_dir()
+    );
+    assert_eq!(IndexFile::load(&paths.index()).unwrap().packages.len(), 2);
     let _ = std::fs::remove_file(archive_cache_path(&root_sha));
     let _ = std::fs::remove_file(archive_cache_path(&old_sha));
     let _ = std::fs::remove_file(archive_cache_path(&new_sha));
